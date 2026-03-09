@@ -45,13 +45,6 @@ jobs:
           mv index-win-x64.exe lobster-win-x64.exe || true
           chmod +x lobster-*
 
-      - name: Checkout releases repo
-        uses: actions/checkout@v4
-        with:
-          repository: Leo0704/lobster-releases
-          token: ${{ secrets.RELEASES_TOKEN }}
-          path: releases-repo
-
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v1
         with:

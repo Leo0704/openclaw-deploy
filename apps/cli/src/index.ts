@@ -44,12 +44,14 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.10';
+const VERSION = '1.0.11';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const SOURCE_REPO_PATH = 'openclaw/openclaw';
 const RELEASE_REPO_PATH = 'Leo0704/lobster-releases';
-const DEFAULT_LICENSE_SERVER_URL = process.env.LOBSTER_LICENSE_SERVER_URL || 'https://license.lobster-assistant.com';
+const DEFAULT_LICENSE_SERVER_URL =
+  process.env.LOBSTER_LICENSE_SERVER_URL ||
+  'https://license-api-lobster-license-qaqgawotfd.cn-hangzhou.fcapp.run';
 const PRODUCT_ID = 'lobster-assistant-desktop';
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
 const ANTHROPIC_API_FORMAT = 'anthropic-messages';

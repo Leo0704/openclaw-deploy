@@ -100,8 +100,8 @@ export class AppError extends Error {
 export const ERROR_MESSAGES: Record<string, { message: string; suggestions: string[] }> = {
   // 网络错误
   'ENOTFOUND': {
-    message: '无法连接到服务器，请检查网络连接',
-    suggestions: ['检查您的网络连接是否正常', '确认域名是否正确', '尝试刷新DNS缓存'],
+    message: '无法解析服务器域名，请检查授权服务器地址或网络设置',
+    suggestions: ['检查网络连接是否正常', '确认服务器域名是否配置正确', '尝试刷新 DNS 缓存或更换网络'],
   },
   'ECONNREFUSED': {
     message: '服务被拒绝连接，请检查服务是否正常运行',

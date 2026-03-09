@@ -1,0 +1,44 @@
+edition: 1.0.0
+name: lobster-license
+access: default
+
+vars:
+  region: cn-hangzhou
+
+services:
+  license-server:
+    component: fc
+    props:
+      region: ${vars.region}
+      service:
+        name: lobster-license
+        description: 龙虾助手激活码验证服务
+        internetAccess: true
+      function:
+        name: license-api
+        description: 激活码验证 API
+        runtime: nodejs18
+        codeUri: ./dist
+        handler: index.handler
+        memorySize: 128
+        timeout: 30
+        environmentVariables:
+          OSS_REGION: oss-cn-hangzhou
+          OSS_BUCKET: ${env(OSS_BUCKET)}
+          OSS_ACCESS_KEY_ID: ${env(OSS_ACCESS_KEY_ID)}
+          OSS_ACCESS_KEY_SECRET: ${env(OSS_ACCESS_KEY_SECRET)}
+      triggers:
+        - name: http-trigger
+          type: http
+          config:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
+      customDomains:
+        - domainName: auto
+          protocol: HTTP
+          routeConfigs:
+            - path: /*
+              serviceName: lobster-license
+              functionName: license-api

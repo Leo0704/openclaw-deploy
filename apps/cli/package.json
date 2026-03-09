@@ -1,0 +1,23 @@
+{
+  "name": "lobster-assistant",
+  "version": "1.0.0",
+  "description": "龙虾助手 - OpenClaw 一键部署工具",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js start",
+    "clean": "rm -rf dist bin",
+    "pkg": "pkg"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.8.0",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@yao-pkg/pkg": "^5.16.1",
+    "typescript": "^5.7.2"
+  }
+}

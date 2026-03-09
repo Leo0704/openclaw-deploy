@@ -1,0 +1,18 @@
+{
+  "name": "lobster-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "description": "龙虾助手 - OpenClaw 一键部署工具",
+  "scripts": {
+    "build": "cd apps/cli && npm run build",
+    "start": "cd apps/cli && node dist/index.js",
+    "pkg": "cd apps/cli && npm run pkg",
+    "clean": "cd apps/cli && npm run clean"
+  },
+  "keywords": ["openclaw", "ai", "claude", "deployment"],
+  "author": "Lobster Assistant Team",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

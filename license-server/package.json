@@ -1,0 +1,22 @@
+{
+  "name": "lobster-license-server",
+  "version": "1.0.0",
+  "description": "龙虾助手激活码验证服务",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "deploy": "s deploy",
+    "generate": "ts-node scripts/generate-codes.ts"
+  },
+  "dependencies": {
+    "@alicloud/fc2": "^2.6.0",
+    "@alicloud/oss20231115": "^1.0.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  }
+}

@@ -47,6 +47,12 @@ jobs:
           ls -la
           chmod +x lobster-* 2>/dev/null || true
 
+      - name: List files to upload
+        working-directory: apps/cli/bin
+        run: |
+          echo "Files to upload:"
+          ls -la lobster-*
+
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v1
         with:
@@ -63,10 +69,6 @@ jobs:
             - **macOS (Intel)**: `lobster-macos-x64`
             - **Linux**: `lobster-linux-x64`
             - **Windows**: `lobster-win-x64.exe`
-          files: |
-            apps/cli/bin/lobster-macos-arm64
-            apps/cli/bin/lobster-macos-x64
-            apps/cli/bin/lobster-linux-x64
-            apps/cli/bin/lobster-win-x64.exe
+          files: apps/cli/bin/lobster-*
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}

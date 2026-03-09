@@ -44,9 +44,11 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.13';
+const VERSION = '1.0.14';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
+const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
+const CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS = 4096;
 const SOURCE_REPO_PATH = 'openclaw/openclaw';
 const RELEASE_REPO_PATH = 'Leo0704/lobster-releases';
 const DEFAULT_LICENSE_SERVER_URL =
@@ -428,10 +430,47 @@ const PROVIDERS = {
 };
 
 function normalizeApiFormat(value: unknown): string {
-  if (String(value || '').trim() === 'anthropic') {
+  const normalized = String(value || '').trim();
+  if (normalized === 'anthropic') {
     return ANTHROPIC_API_FORMAT;
   }
-  return String(value || 'openai-completions').trim() || 'openai-completions';
+  if (normalized === 'openai' || !normalized) {
+    return 'openai-completions';
+  }
+  return normalized;
+}
+
+function normalizeCustomCompatibilityChoice(value: unknown): 'openai' | 'anthropic' | 'unknown' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'anthropic' || normalized === ANTHROPIC_API_FORMAT) {
+    return 'anthropic';
+  }
+  if (normalized === 'unknown') {
+    return 'unknown';
+  }
+  return 'openai';
+}
+
+function resolveApiFormatFromCompatibility(value: unknown): string {
+  return normalizeCustomCompatibilityChoice(value) === 'anthropic' ? ANTHROPIC_API_FORMAT : 'openai-completions';
+}
+
+function isAzureUrl(baseUrl: string): boolean {
+  try {
+    const url = new NodeURL(baseUrl);
+    const host = url.hostname.toLowerCase();
+    return host.endsWith('.services.ai.azure.com') || host.endsWith('.openai.azure.com');
+  } catch {
+    return false;
+  }
+}
+
+function transformAzureUrl(baseUrl: string, modelId: string): string {
+  const normalizedUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  if (normalizedUrl.includes('/openai/deployments/')) {
+    return normalizedUrl;
+  }
+  return `${normalizedUrl}/openai/deployments/${modelId}`;
 }
 
 function getAnthropicBaseUrl(baseUrl: string): string {
@@ -466,6 +505,60 @@ function buildEndpointIdFromUrl(baseUrl: string): string {
   } catch {
     return 'custom';
   }
+}
+
+function resolveCustomBaseUrlForConfig(baseUrl: string, modelId: string): string {
+  const trimmedBaseUrl = String(baseUrl || '').trim();
+  const trimmedModelId = String(modelId || '').trim();
+  if (!trimmedBaseUrl) {
+    return trimmedBaseUrl;
+  }
+  return isAzureUrl(trimmedBaseUrl) && trimmedModelId ? transformAzureUrl(trimmedBaseUrl, trimmedModelId) : trimmedBaseUrl;
+}
+
+function buildCustomProviderConfig(config: Record<string, unknown>, providerBaseUrl: string, modelId: string) {
+  const providerId = normalizeEndpointId(config.customEndpointId) || buildEndpointIdFromUrl(providerBaseUrl) || 'custom';
+  const modelRef = `${providerId}/${modelId}`;
+  const alias = String(config.customModelAlias || '').trim();
+  const providerConfig: Record<string, unknown> = {
+    baseUrl: providerBaseUrl,
+    api: normalizeApiFormat(config.apiFormat || 'openai-completions'),
+    apiKey: String(config.apiKey || ''),
+    models: [
+      {
+        id: modelId,
+        name: `${modelId} (Custom Provider)`,
+        contextWindow: CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        reasoning: false,
+      },
+    ],
+  };
+
+  return {
+    providerId,
+    modelRef,
+    openclawConfig: {
+      models: {
+        mode: 'merge',
+        providers: {
+          [providerId]: providerConfig,
+        },
+      },
+      agents: {
+        defaults: {
+          model: {
+            primary: modelRef,
+          },
+          models: {
+            [modelRef]: alias ? { alias } : {},
+          },
+        },
+      },
+    } as Record<string, unknown>,
+  };
 }
 
 function readJsonFile(filePath: string): Record<string, unknown> | null {
@@ -1004,6 +1097,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         verifying: false,
         message: '',
         suggestedEndpointId: '',
+        retryMode: '',
       },
     };
 
@@ -1117,9 +1211,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
                 <div class="form-group">
                   <label class="form-label">Endpoint compatibility</label>
                   <select id="deployApiFormat" class="form-select">
-                    <option value="openai-completions" \${normalizeApiFormat(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI-compatible</option>
-                    <option value="${ANTHROPIC_API_FORMAT}" \${normalizeApiFormat(c.apiFormat) === '${ANTHROPIC_API_FORMAT}' ? 'selected' : ''}>Anthropic-compatible</option>
-                    <option value="unknown">Unknown (自动探测)</option>
+                    <option value="openai" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
+                    <option value="anthropic" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'anthropic' ? 'selected' : ''}>Anthropic-compatible</option>
+                    <option value="unknown" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'unknown' ? 'selected' : ''}>Unknown (自动探测)</option>
                   </select>
                 </div>
                 <div class="form-group">
@@ -1568,7 +1662,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       if (isCustom) {
         if (!payload.model) return toast('请输入 Model ID', 'error');
         payload.baseUrl = $('deployBaseUrl')?.value || '';
-        payload.apiFormat = $('deployApiFormat')?.value || 'openai-completions';
+        payload.apiFormat = resolveApiFormatFromCompatibilityClient($('deployApiFormat')?.value || 'openai');
         payload.customModelId = payload.model;
       }
 
@@ -1628,6 +1722,17 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         .replace(/^-+|-+$/g, '');
     }
 
+    function normalizeCustomCompatibilityChoiceClient(value) {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'anthropic' || normalized === '${ANTHROPIC_API_FORMAT}') return 'anthropic';
+      if (normalized === 'unknown') return 'unknown';
+      return 'openai';
+    }
+
+    function resolveApiFormatFromCompatibilityClient(value) {
+      return normalizeCustomCompatibilityChoiceClient(value) === 'anthropic' ? '${ANTHROPIC_API_FORMAT}' : 'openai-completions';
+    }
+
     function buildEndpointIdFromUrlClient(baseUrl) {
       try {
         const url = new URL(baseUrl);
@@ -1645,7 +1750,20 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         verifying: false,
         message: '',
         suggestedEndpointId: '',
+        retryMode: '',
       };
+    }
+
+    function chooseCustomRetry(mode) {
+      state.customWizard.retryMode = mode;
+      state.customWizard.verified = false;
+      const resultEl = $('test-result');
+      if (mode === 'baseUrl' || mode === 'both') $('baseUrl')?.focus();
+      if (mode === 'model' || mode === 'both') $('customModelId')?.focus();
+      if (resultEl) {
+        resultEl.style.display = 'block';
+        resultEl.innerHTML = '<div class="note note-info">请按 OpenClaw 源码的重试分支修改字段后，再次点击“验证 Endpoint”。</div>';
+      }
     }
 
     function syncCustomEndpointId() {
@@ -1707,9 +1825,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
             <div class="form-group">
               <label class="form-label">Endpoint compatibility</label>
               <select id="apiFormat" class="form-select" onchange="resetCustomWizard()">
-                <option value="openai-completions" \${normalizeApiFormat(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI-compatible</option>
-                <option value="${ANTHROPIC_API_FORMAT}" \${normalizeApiFormat(c.apiFormat) === '${ANTHROPIC_API_FORMAT}' ? 'selected' : ''}>Anthropic-compatible</option>
-                <option value="unknown">Unknown (自动探测)</option>
+                <option value="openai" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
+                <option value="anthropic" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'anthropic' ? 'selected' : ''}>Anthropic-compatible</option>
+                <option value="unknown" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'unknown' ? 'selected' : ''}>Unknown (自动探测)</option>
               </select>
             </div>
             <div class="form-group">
@@ -1723,14 +1841,6 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
             <div class="form-group">
               <label class="form-label">Model alias (optional)</label>
               <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: glm">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Context Window</label>
-              <input type="number" id="contextWindow" class="form-input" value="\${c.contextWindow || 128000}" placeholder="128000">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Max Tokens</label>
-              <input type="number" id="maxTokens" class="form-input" value="\${c.maxTokens || 4096}" placeholder="4096">
             </div>
             <div id="custom-wizard-result" style="margin-top:12px">
               \${state.customWizard.message ? \`<div class="note" style="background:\${state.customWizard.verified ? '#D1FAE5' : '#FEF2F2'};color:\${state.customWizard.verified ? '#065F46' : '#991B1B'}">\${state.customWizard.message}</div>\` : ''}
@@ -1771,7 +1881,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       resultEl.innerHTML = '<div style="text-align:center;padding:20px;color:#6B7280">🔄 正在测试连接...</div>';
 
       const isCustom = state.selectedProvider === 'custom';
-      const requestedFormat = $('apiFormat')?.value || 'openai-completions';
+      const requestedCompatibility = $('apiFormat')?.value || 'openai';
       const baseUrl = $('baseUrl')?.value;
       const model = $('customModelId')?.value || state.selectedModel;
       const endpointIdInput = $('customEndpointId');
@@ -1790,38 +1900,49 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       });
 
       let res;
-      let resolvedFormat = requestedFormat;
+      let resolvedCompatibility = requestedCompatibility;
 
-      if (isCustom && requestedFormat === 'unknown') {
+      if (isCustom && requestedCompatibility === 'unknown') {
         const openaiRes = await attempt('openai-completions');
         if (openaiRes.success) {
           res = openaiRes;
-          resolvedFormat = 'openai-completions';
+          resolvedCompatibility = 'openai';
         } else {
           const anthropicRes = await attempt('${ANTHROPIC_API_FORMAT}');
           res = anthropicRes;
           if (anthropicRes.success) {
-            resolvedFormat = '${ANTHROPIC_API_FORMAT}';
+            resolvedCompatibility = 'anthropic';
           }
         }
       } else {
-        res = await attempt(requestedFormat);
+        res = await attempt(resolveApiFormatFromCompatibilityClient(requestedCompatibility));
       }
 
       if (res.success) {
         if (isCustom) {
           state.customWizard.verified = true;
-          state.customWizard.message = '验证成功，已与 OpenClaw 源码兼容格式对齐。现在可以保存配置。';
+          state.customWizard.retryMode = '';
+          state.customWizard.message = '验证成功。输入顺序、验证行为和落盘配置将按 OpenClaw custom onboarding 语义保存。';
           state.customWizard.suggestedEndpointId = suggestedEndpointId;
-          if ($('apiFormat')) $('apiFormat').value = resolvedFormat;
+          if ($('apiFormat')) $('apiFormat').value = resolvedCompatibility;
         }
         resultEl.innerHTML = \`<div class="note" style="background:#D1FAE5;color:#065F46">✅ 连接成功！模型响应正常</div>\`;
       } else {
         if (isCustom) {
           state.customWizard.verified = false;
+          state.customWizard.retryMode = 'baseUrl';
           state.customWizard.message = '验证失败：' + (res.error || '未知错误');
         }
-        resultEl.innerHTML = \`<div class="note" style="background:#FEE2E2;color:#991B1B">❌ 连接失败：\${res.error || '未知错误'}</div>\`;
+        resultEl.innerHTML = \`
+          <div class="note" style="background:#FEE2E2;color:#991B1B">❌ 连接失败：\${res.error || '未知错误'}</div>
+          \${isCustom ? \`
+            <div class="actions" style="margin-top:12px">
+              <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('baseUrl')">修改 Base URL</button>
+              <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('model')">修改 Model ID</button>
+              <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('both')">同时修改两者</button>
+            </div>
+          \` : ''}
+        \`;
       }
     }
 
@@ -1850,12 +1971,10 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         if (!state.customWizard.verified) {
           return toast('请先完成 Endpoint 验证，再保存自定义模型配置', 'error');
         }
-        configData.apiFormat = $('apiFormat')?.value || 'openai-completions';
+        configData.apiFormat = resolveApiFormatFromCompatibilityClient($('apiFormat')?.value || 'openai');
         configData.customModelId = $('customModelId')?.value || state.selectedModel;
         configData.customEndpointId = $('customEndpointId')?.value || buildEndpointIdFromUrlClient($('baseUrl')?.value || '');
         configData.customModelAlias = $('customModelAlias')?.value || '';
-        configData.contextWindow = parseInt($('contextWindow')?.value || '128000');
-        configData.maxTokens = parseInt($('maxTokens')?.value || '4096');
       }
 
       const res = await api('config', configData);
@@ -2274,8 +2393,13 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
     const http = require('http');
     const client = baseUrl.startsWith('https') ? https : http;
     const isAnthropic = apiFormat === ANTHROPIC_API_FORMAT;
-    const requestBaseUrl = isAnthropic ? getAnthropicBaseUrl(baseUrl) : baseUrl;
+    const resolvedBaseUrl = resolveCustomBaseUrlForConfig(baseUrl, model);
+    const requestBaseUrl = isAnthropic ? getAnthropicBaseUrl(resolvedBaseUrl) : resolvedBaseUrl;
+    const isAzureOpenAi = !isAnthropic && isAzureUrl(baseUrl);
     const testUrl = buildEndpointUrl(requestBaseUrl, isAnthropic ? 'messages' : 'chat/completions');
+    if (isAzureOpenAi) {
+      testUrl.searchParams.set('api-version', '2024-10-21');
+    }
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -2283,6 +2407,8 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
     if (isAnthropic) {
       headers['anthropic-version'] = '2023-06-01';
       headers['x-api-key'] = apiKey;
+    } else if (isAzureOpenAi) {
+      headers['api-key'] = apiKey;
     } else {
       headers.Authorization = `Bearer ${apiKey}`;
     }
@@ -2295,6 +2421,12 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
             max_tokens: 1,
             stream: false,
           }
+        : isAzureOpenAi
+          ? {
+              messages: [{ role: 'user', content: 'hi' }],
+              max_completion_tokens: 5,
+              stream: false,
+            }
         : {
             model,
             messages: [{ role: 'user', content: 'hi' }],
@@ -2377,10 +2509,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     const baseUrl = (config.baseUrl || provider.baseUrl) as string;
     const apiFormat = normalizeApiFormat(config.apiFormat || provider.apiFormat || 'openai-completions');
     const model = (config.model || config.customModelId || '') as string;
-    const customEndpointId = normalizeEndpointId(config.customEndpointId) || 'custom';
     const customModelAlias = String(config.customModelAlias || '').trim();
-    const contextWindow = (config.contextWindow || 128000) as number;
-    const maxTokens = (config.maxTokens || 4096) as number;
     const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
 
     const availability = await checkPortAvailability(gatewayPort);
@@ -2390,7 +2519,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     }
 
     // 生成 OpenClaw 配置文件
-    const openclawConfig: Record<string, unknown> = {
+    let openclawConfig: Record<string, unknown> = {
       models: {
         mode: 'merge',
         providers: {} as Record<string, unknown>,
@@ -2399,33 +2528,36 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
 
     // 根据提供商类型配置
     if (config.provider === 'custom' || provider.type === 'proxy') {
-      // 自定义/中转服务配置
-      (openclawConfig.models as Record<string, unknown>).providers = {
-        [customEndpointId]: {
-          baseUrl: baseUrl,
-          apiKey: config.apiKey,
-          api: apiFormat,
-          models: [
-            {
-              id: model,
-              name: model,
-              contextWindow: contextWindow,
-              maxTokens: maxTokens,
-              input: ['text', 'image'],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            },
-          ],
-        },
-      };
-
-      if (config.provider === 'custom' && customModelAlias) {
-        openclawConfig.agents = {
-          defaults: {
-            models: {
-              [`${customEndpointId}/${model}`]: {
-                alias: customModelAlias,
+      const providerBaseUrl = resolveCustomBaseUrlForConfig(baseUrl, model);
+      if (config.provider === 'custom') {
+        openclawConfig = buildCustomProviderConfig(
+          {
+            ...config,
+            apiFormat,
+            baseUrl: providerBaseUrl,
+            customModelAlias,
+          },
+          providerBaseUrl,
+          model
+        );
+      } else {
+        const proxyProviderId = normalizeEndpointId(config.customEndpointId) || buildEndpointIdFromUrl(providerBaseUrl) || 'custom';
+        (openclawConfig.models as Record<string, unknown>).providers = {
+          [proxyProviderId]: {
+            baseUrl: providerBaseUrl,
+            apiKey: config.apiKey,
+            api: apiFormat,
+            models: [
+              {
+                id: model,
+                name: model,
+                contextWindow: CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+                maxTokens: CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+                input: ['text'],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                reasoning: false,
               },
-            },
+            ],
           },
         };
       }

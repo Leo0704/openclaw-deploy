@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.9';
+const VERSION = '1.0.10';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const SOURCE_REPO_PATH = 'openclaw/openclaw';

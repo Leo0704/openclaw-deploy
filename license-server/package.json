@@ -1,6 +1,6 @@
 {
   "name": "lobster-license-server",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "龙虾助手激活码验证服务",
   "main": "dist/index.js",
   "scripts": {

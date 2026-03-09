@@ -22,6 +22,10 @@ jobs:
         working-directory: apps/cli
         run: npm install
 
+      - name: Build TypeScript
+        working-directory: apps/cli
+        run: npm run build
+
       - name: Get version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT

@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.17';
+const VERSION = '1.0.18';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;

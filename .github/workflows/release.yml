@@ -13,10 +13,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-latest
             target: node18-macos-arm64
             asset_name: lobster-macos-arm64
-          - runner: macos-13
+          - runner: macos-latest
             target: node18-macos-x64
             asset_name: lobster-macos-x64
           - runner: ubuntu-latest

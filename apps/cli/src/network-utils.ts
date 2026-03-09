@@ -48,6 +48,12 @@ export interface NetworkCheckResult {
 const DEFAULT_TIMEOUT = 30000; // 30秒
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_DELAY = 1000; // 1秒
+const DEFAULT_CONNECTIVITY_URLS = [
+  'https://github.com',
+  'https://api.github.com',
+  'https://hub.gitmirror.com/https://github.com',
+  'https://mirror.ghproxy.com/https://github.com',
+];
 
 // ============================================
 // 核心网络请求函数
@@ -165,10 +171,9 @@ export async function fetchWithRetry<T = unknown>(
   } = retryOptions;
 
   let lastError: Error | undefined;
-  let attempt = 0;
+  const maxAttempts = maxRetries + 1;
 
-  while (attempt <= maxRetries) {
-    attempt++;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 
     try {
       const result = await fetchWithTimeout<T>(url, options, timeout);
@@ -189,7 +194,7 @@ export async function fetchWithRetry<T = unknown>(
         // 网络错误，检查是否应该重试
         const code = (result.error as NodeJS.ErrnoException).code;
         const retryableCodes = ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND'];
-        if (!retryableCodes.includes(code || '') && attempt < maxRetries) {
+        if (!retryableCodes.includes(code || '')) {
           // 对于非网络错误，不重试
           return result;
         }
@@ -202,7 +207,7 @@ export async function fetchWithRetry<T = unknown>(
     }
 
     // 如果还有重试机会，等待后重试
-    if (attempt <= maxRetries) {
+    if (attempt < maxAttempts) {
       const delay = backoff ? retryDelay * Math.pow(2, attempt - 1) : retryDelay;
       console.log(`[网络] 请求失败，${delay}ms 后进行第 ${attempt} 次重试...`);
       await sleep(delay);
@@ -213,7 +218,7 @@ export async function fetchWithRetry<T = unknown>(
     success: false,
     error: lastError || createError(ErrorType.NETWORK, 'MAX_RETRIES_EXCEEDED', {
       userMessage: '请求失败，已达到最大重试次数',
-      context: { url, attempts: attempt },
+      context: { url, attempts: maxAttempts },
     }),
   };
 }
@@ -256,7 +261,7 @@ export async function checkNetworkConnectivity(
  * 检查是否有网络连接
  */
 export async function hasNetworkConnection(): Promise<boolean> {
-  const results = await checkNetworkConnectivity(['https://github.com']);
+  const results = await checkNetworkConnectivity(DEFAULT_CONNECTIVITY_URLS);
   return results.some((r) => r.connected);
 }
 

@@ -30,7 +30,6 @@ const {
   fetchWithTimeout,
   fetchWithRetry,
   checkNetworkConnectivity,
-  hasNetworkConnection,
   checkGitHubAccess,
   downloadFile,
 } = require('./network-utils') as typeof import('./network-utils');
@@ -44,7 +43,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.18';
+const VERSION = '1.0.19';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -54,6 +53,9 @@ const RELEASE_REPO_PATH = 'Leo0704/lobster-releases';
 const DEFAULT_LICENSE_SERVER_URL =
   process.env.LOBSTER_LICENSE_SERVER_URL ||
   'https://license-api-lobster-license-qaqgawotfd.cn-hangzhou.fcapp.run';
+const DEFAULT_PURCHASE_URL =
+  process.env.LOBSTER_PURCHASE_URL ||
+  'https://m.tb.cn/h.iW33Qi7?tk=MPQHUv32tQo%20CZ193';
 const PRODUCT_ID = 'lobster-assistant-desktop';
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
 const ANTHROPIC_API_FORMAT = 'anthropic-messages';
@@ -95,6 +97,12 @@ function buildMirrorDownloadUrl(mirrorIndex: number, originalUrl: string): strin
 function getLicenseServerUrl(config: Record<string, unknown>): string {
   const configuredUrl = (config.licenseServerUrl || '').toString().trim();
   const baseUrl = configuredUrl || DEFAULT_LICENSE_SERVER_URL;
+  return baseUrl.replace(/\/+$/, '');
+}
+
+function getPurchaseUrl(config: Record<string, unknown>): string {
+  const configuredUrl = String(config.purchaseUrl || '').trim();
+  const baseUrl = configuredUrl || DEFAULT_PURCHASE_URL;
   return baseUrl.replace(/\/+$/, '');
 }
 
@@ -247,21 +255,7 @@ async function verifyLicenseStatus(config: Record<string, unknown>): Promise<Rec
 }
 
 // 热门技能列表（从 ClawHub 获取）
-const POPULAR_SKILLS = [
-  { id: 'tavily-search', name: 'Tavily Search', icon: '🔍', desc: 'AI优化的网络搜索，返回精准结果', stars: '129k', category: '搜索' },
-  { id: 'summarize', name: 'Summarize', icon: '📄', desc: '网页/PDF/视频/音频总结', stars: '87k', category: '文档' },
-  { id: 'github', name: 'GitHub', icon: '🐙', desc: '操作 GitHub issue/PR/CI', stars: '75k', category: '开发' },
-  { id: 'weather', name: 'Weather', icon: '🌤️', desc: '天气查询（无需API Key）', stars: '64k', category: '生活' },
-  { id: 'notion', name: 'Notion', icon: '📝', desc: 'Notion 笔记和数据库操作', stars: '43k', category: '办公' },
-  { id: 'obsidian', name: 'Obsidian', icon: '📕', desc: 'Obsidian 笔记库管理', stars: '37k', category: '笔记' },
-  { id: 'nano-pdf', name: 'Nano PDF', icon: '📑', desc: '用自然语言编辑 PDF', stars: '40k', category: '文档' },
-  { id: 'brave-search', name: 'Brave Search', icon: '🦁', desc: 'Brave 搜索引擎集成', stars: '30k', category: '搜索' },
-  { id: 'openai-whisper', name: 'Whisper', icon: '🎙️', desc: '本地语音转文字（无需API）', stars: '34k', category: '音频' },
-  { id: 'gog', name: 'Google Workspace', icon: '📧', desc: 'Gmail/Calendar/Drive 操作', stars: '88k', category: '办公' },
-];
-
-// 技能分类
-const SKILL_CATEGORIES = ['全部', '搜索', '文档', '开发', '办公', '笔记', '生活', '音频'];
+const CLAWHUB_MARKET_URL = 'https://clawhub.ai';
 
 // API 提供商配置（支持直连和中转）
 const PROVIDERS = {
@@ -569,6 +563,230 @@ function readJsonFile(filePath: string): Record<string, unknown> | null {
   }
 }
 
+type InstalledSkillEntry = {
+  id: string;
+  name: string;
+  source: string;
+  removable: boolean;
+};
+
+type OpenClawSkillStatusReport = {
+  skills?: Array<{
+    name?: string;
+    source?: string;
+    bundled?: boolean;
+  }>;
+};
+
+function getOpenClawConfigPath(): string {
+  return path.join(os.homedir(), '.openclaw', 'openclaw.json');
+}
+
+function readOpenClawRuntimeConfig(): Record<string, unknown> {
+  return readJsonFile(getOpenClawConfigPath()) || {};
+}
+
+function resolveOpenClawWorkspaceDir(): string {
+  const cfg = readOpenClawRuntimeConfig();
+  const agents = cfg.agents as Record<string, unknown> | undefined;
+  const defaults = agents?.defaults as Record<string, unknown> | undefined;
+  const configured = String(defaults?.workspace || '').trim();
+  return configured ? path.resolve(configured) : path.join(os.homedir(), '.openclaw', 'workspace');
+}
+
+function mapOpenClawSkillSource(source: string, bundled?: boolean): { source: string; removable: boolean } {
+  switch (source) {
+    case 'openclaw-workspace':
+      return { source: '工作区', removable: true };
+    case 'openclaw-managed':
+      return { source: 'OpenClaw 已管理', removable: true };
+    case 'agents-skills-personal':
+      return { source: '个人 .agents', removable: true };
+    case 'agents-skills-project':
+      return { source: '项目 .agents', removable: true };
+    case 'openclaw-extra':
+      return { source: '额外目录', removable: false };
+    case 'openclaw-bundled':
+      return { source: bundled ? 'OpenClaw 内置' : '打包技能', removable: false };
+    default:
+      return { source: source || '未知', removable: false };
+  }
+}
+
+function mapSkillStatusReport(report: OpenClawSkillStatusReport | null | undefined): InstalledSkillEntry[] {
+  const entries = Array.isArray(report?.skills) ? report.skills : [];
+  const merged = new Map<string, InstalledSkillEntry>();
+  for (const entry of entries) {
+    const id = String(entry?.name || '').trim();
+    if (!id) {
+      continue;
+    }
+    const mapped = mapOpenClawSkillSource(String(entry?.source || '').trim(), entry?.bundled === true);
+    merged.set(id, {
+      id,
+      name: id,
+      source: mapped.source,
+      removable: mapped.removable,
+    });
+  }
+  return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function getOpenClawCliCommand(projectPath: string, args: string[]): { file: string; args: string[] } {
+  const pm = detectProjectPackageManager(projectPath);
+  return pm === 'pnpm'
+    ? { file: 'pnpm', args: ['openclaw', ...args] }
+    : { file: 'npm', args: ['run', 'openclaw', '--', ...args] };
+}
+
+function tryParseJsonObject(raw: string | undefined): Record<string, unknown> | null {
+  const text = String(raw || '').trim();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function listSkillsFromRoot(rootDir: string, source: string, removable: boolean): InstalledSkillEntry[] {
+  if (!rootDir || !fs.existsSync(rootDir)) {
+    return [];
+  }
+  try {
+    return fs.readdirSync(rootDir).flatMap((entryName: string) => {
+      const entryPath = path.join(rootDir, entryName);
+      if (!fs.statSync(entryPath).isDirectory()) {
+        return [];
+      }
+      if (!fs.existsSync(path.join(entryPath, 'SKILL.md'))) {
+        return [];
+      }
+      return [{
+        id: entryName,
+        name: entryName,
+        source,
+        removable,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function getInstalledOpenClawSkills(config: Record<string, unknown>): InstalledSkillEntry[] {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+    return [];
+  }
+
+  const workspaceDir = resolveOpenClawWorkspaceDir();
+  const runtimeConfig = readOpenClawRuntimeConfig();
+  const skills = runtimeConfig.skills as Record<string, unknown> | undefined;
+  const load = skills?.load as Record<string, unknown> | undefined;
+  const extraDirs = Array.isArray(load?.extraDirs)
+    ? load?.extraDirs
+      .map((dir) => String(dir || '').trim())
+      .filter(Boolean)
+    : [];
+
+  const sources: Array<{ dir: string; source: string; removable: boolean }> = [
+    { dir: path.join(config.installPath as string, 'skills'), source: 'OpenClaw 内置', removable: false },
+    { dir: path.join(os.homedir(), '.openclaw', 'skills'), source: 'OpenClaw 已管理', removable: true },
+    { dir: path.join(os.homedir(), '.agents', 'skills'), source: '个人 .agents', removable: true },
+    { dir: path.join(workspaceDir, '.agents', 'skills'), source: '项目 .agents', removable: true },
+    { dir: path.join(workspaceDir, 'skills'), source: '工作区', removable: true },
+    ...extraDirs.map((dir) => ({ dir: path.resolve(dir), source: '额外目录', removable: false })),
+  ];
+
+  const merged = new Map<string, InstalledSkillEntry>();
+  for (const source of sources) {
+    for (const skill of listSkillsFromRoot(source.dir, source.source, source.removable)) {
+      merged.set(skill.id, skill);
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+async function getInstalledOpenClawSkillsFromStatus(config: Record<string, unknown>): Promise<InstalledSkillEntry[]> {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+    return [];
+  }
+
+  const projectPath = config.installPath as string;
+  const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+  const gatewayToken = readGatewayTokenFromHome();
+
+  if (gatewayToken) {
+    const gatewayCall = getOpenClawCliCommand(projectPath, [
+      'gateway',
+      'call',
+      'skills.status',
+      '--json',
+      '--url',
+      `ws://127.0.0.1:${gatewayPort}`,
+      '--token',
+      gatewayToken,
+      '--params',
+      '{}',
+    ]);
+    const gatewayResult = runCommandArgs(gatewayCall.file, projectPath, {
+      args: gatewayCall.args,
+      timeout: 30000,
+      ignoreError: true,
+      silent: true,
+    });
+    if (gatewayResult.success) {
+      const parsed = tryParseJsonObject(gatewayResult.stdout);
+      if (parsed && Array.isArray((parsed as OpenClawSkillStatusReport).skills)) {
+        const mapped = mapSkillStatusReport(parsed as OpenClawSkillStatusReport);
+        return mapped;
+      }
+    }
+  }
+
+  const listCommand = getOpenClawCliCommand(projectPath, ['skills', 'list', '--json']);
+  const listResult = runCommandArgs(listCommand.file, projectPath, {
+    args: listCommand.args,
+    timeout: 30000,
+    ignoreError: true,
+    silent: true,
+  });
+  if (listResult.success) {
+    const parsed = tryParseJsonObject(listResult.stdout);
+    if (parsed && Array.isArray((parsed as OpenClawSkillStatusReport).skills)) {
+      const mapped = mapSkillStatusReport(parsed as OpenClawSkillStatusReport);
+      return mapped;
+    }
+  }
+
+  return getInstalledOpenClawSkills(config);
+}
+
+function resolveRemovableSkillPath(config: Record<string, unknown>, skillId: string): { path: string; source: string } | null {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+    return null;
+  }
+
+  const workspaceDir = resolveOpenClawWorkspaceDir();
+  const candidates = [
+    { path: path.join(workspaceDir, 'skills', skillId), source: '工作区' },
+    { path: path.join(workspaceDir, '.agents', 'skills', skillId), source: '项目 .agents' },
+    { path: path.join(os.homedir(), '.agents', 'skills', skillId), source: '个人 .agents' },
+    { path: path.join(os.homedir(), '.openclaw', 'skills', skillId), source: 'OpenClaw 已管理' },
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate.path, 'SKILL.md'))) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function detectProjectPackageManager(projectPath: string): 'pnpm' | 'npm' {
   const packageJsonPath = path.join(projectPath, 'package.json');
   const packageJson = readJsonFile(packageJsonPath);
@@ -759,6 +977,45 @@ function saveConfig(config: Record<string, unknown>) {
   fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
 }
 
+function clearOpenClawDeploymentConfig(config: Record<string, unknown>) {
+  delete config.installPath;
+  delete config.provider;
+  delete config.model;
+  delete config.apiKey;
+  delete config.baseUrl;
+  delete config.apiFormat;
+  delete config.customModelId;
+  delete config.customEndpointId;
+  delete config.customModelAlias;
+  delete config.gatewayPort;
+}
+
+function isProtectedRemovalPath(targetPath: string): boolean {
+  const normalized = path.resolve(targetPath);
+  const parsed = path.parse(normalized);
+  const homeDir = path.resolve(os.homedir());
+  const cwd = path.resolve(process.cwd());
+
+  return (
+    !normalized ||
+    normalized === parsed.root ||
+    normalized === homeDir ||
+    normalized === cwd ||
+    normalized === path.dirname(homeDir)
+  );
+}
+
+function removePathIfExists(targetPath: string, removed: string[]) {
+  if (!targetPath) return;
+  const normalized = path.resolve(targetPath);
+  if (!fs.existsSync(normalized)) return;
+  if (isProtectedRemovalPath(normalized)) {
+    throw new Error(`拒绝删除高风险路径: ${normalized}`);
+  }
+  fs.rmSync(normalized, { recursive: true, force: true });
+  removed.push(normalized);
+}
+
 // ============================================
 // 工具函数
 // ============================================
@@ -887,13 +1144,66 @@ function runCommandSimple(cmd: string, cwd: string): string {
   return result.stdout || '';
 }
 
+function appendLog(
+  level: 'info' | 'success' | 'error' | 'warning',
+  message: string
+) {
+  logs.push({ time: new Date().toLocaleTimeString(), level, message });
+  if (logs.length > 100) logs.shift();
+}
+
 function checkCommand(cmd: string): boolean {
   try {
-    execSync(`which ${cmd} || where ${cmd}`, { stdio: 'pipe' });
+    if (os.platform() === 'win32') {
+      execFileSync('where', [cmd], { stdio: 'pipe' });
+    } else {
+      execFileSync('which', [cmd], { stdio: 'pipe' });
+    }
     return true;
   } catch {
     return false;
   }
+}
+
+function parseCommandForSpawn(command: string): { file: string; args: string[] } {
+  const tokens = command.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  const normalized = tokens.map((token) => token.replace(/^['"]|['"]$/g, ''));
+  return {
+    file: normalized[0] || '',
+    args: normalized.slice(1),
+  };
+}
+
+function resolveRemoteDefaultRef(projectPath: string): string {
+  const originHead = runCommand('git symbolic-ref refs/remotes/origin/HEAD', projectPath, {
+    ignoreError: true,
+    silent: true,
+  });
+
+  if (originHead.success && originHead.stdout) {
+    const match = originHead.stdout.trim().match(/^refs\/remotes\/origin\/(.+)$/);
+    if (match?.[1]) {
+      return `origin/${match[1]}`;
+    }
+  }
+
+  const mainRef = runCommand('git rev-parse --verify origin/main', projectPath, {
+    ignoreError: true,
+    silent: true,
+  });
+  if (mainRef.success) {
+    return 'origin/main';
+  }
+
+  const masterRef = runCommand('git rev-parse --verify origin/master', projectPath, {
+    ignoreError: true,
+    silent: true,
+  });
+  if (masterRef.success) {
+    return 'origin/master';
+  }
+
+  return 'origin/main';
 }
 
 /**
@@ -991,71 +1301,251 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
   <title>🦞 龙虾助手</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #FF6B35 0%, #004E89 100%);
-      min-height: 100vh; padding: 20px;
+    :root {
+      --bg-top: #f36b32;
+      --bg-mid: #134074;
+      --bg-bottom: #08111f;
+      --surface: rgba(255,255,255,0.94);
+      --surface-strong: #ffffff;
+      --surface-soft: #f6f8fc;
+      --surface-accent: #fff5ef;
+      --text-main: #18212f;
+      --text-muted: #5f6b7a;
+      --text-soft: #8b95a5;
+      --border: rgba(24,33,47,0.08);
+      --border-strong: rgba(243,107,50,0.18);
+      --brand: #f36b32;
+      --brand-dark: #d75621;
+      --success: #0f9d72;
+      --danger: #e24a4a;
+      --warning: #d48a18;
+      --shadow: 0 18px 60px rgba(7,15,28,0.18);
+      --radius-xl: 22px;
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 10px;
     }
-    .container { max-width: 800px; margin: 0 auto; }
-    .header { text-align: center; color: white; padding: 30px 0; }
-    .logo { font-size: 60px; margin-bottom: 10px; }
-    .title { font-size: 28px; font-weight: bold; margin-bottom: 5px; }
-    .subtitle { opacity: 0.9; }
-    .version { font-size: 12px; opacity: 0.7; margin-top: 5px; }
-    .card { background: white; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
-    .card-title { font-size: 18px; color: #1F2937; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #E5E7EB; display: flex; align-items: center; gap: 8px; }
-    .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-    @media (max-width: 500px) { .status-grid { grid-template-columns: 1fr; } }
-    .status-item { padding: 16px; background: #F9FAFB; border-radius: 8px; }
-    .status-label { font-size: 12px; color: #6B7280; margin-bottom: 4px; }
-    .status-value { font-size: 16px; font-weight: 600; color: #1F2937; }
-    .status-value.success { color: #10B981; }
-    .status-value.error { color: #EF4444; }
-    .status-value.warning { color: #F59E0B; }
-    .btn { padding: 12px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin-right: 8px; margin-bottom: 8px; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
-    .btn-primary { background: #FF6B35; color: white; }
-    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
-    .btn-secondary { background: #F3F4F6; color: #1F2937; }
-    .btn-secondary:hover { background: #E5E7EB; }
-    .btn-danger { background: #EF4444; color: white; }
-    .btn-danger:hover { opacity: 0.9; }
+    body {
+      font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.2), transparent 28%),
+        radial-gradient(circle at top right, rgba(243,107,50,0.22), transparent 24%),
+        linear-gradient(155deg, var(--bg-top) 0%, var(--bg-mid) 56%, var(--bg-bottom) 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 920px; margin: 0 auto; }
+    .header {
+      color: white;
+      padding: 22px 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .header-main { display: flex; align-items: center; gap: 18px; }
+    .logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 22px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.2),
+        0 16px 30px rgba(7,15,28,0.18);
+      backdrop-filter: blur(10px);
+      padding: 10px;
+    }
+    .logo svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      filter: drop-shadow(0 10px 18px rgba(127, 27, 27, 0.24));
+    }
+    .title { font-size: 32px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 4px; }
+    .subtitle { opacity: 0.88; font-size: 14px; }
+    .version { font-size: 12px; opacity: 0.72; margin-top: 6px; }
+    .header-badges { display: flex; gap: 10px; flex-wrap: wrap; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.16);
+      color: rgba(255,255,255,0.92);
+      font-size: 12px;
+      backdrop-filter: blur(10px);
+    }
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius-xl);
+      padding: 28px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,0.45);
+      backdrop-filter: blur(16px);
+      animation: fadeUp 0.24s ease-out;
+    }
+    .card-title {
+      font-size: 22px;
+      color: var(--text-main);
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: -0.02em;
+    }
+    .card-subtitle { color: var(--text-muted); font-size: 14px; margin: -6px 0 18px; line-height: 1.65; }
+    .hero-panel {
+      background: linear-gradient(135deg, rgba(243,107,50,0.1), rgba(19,64,116,0.08));
+      border: 1px solid var(--border-strong);
+      border-radius: 18px;
+      padding: 18px 18px 16px;
+      margin-bottom: 20px;
+    }
+    .hero-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: var(--brand-dark); text-transform: uppercase; margin-bottom: 8px; }
+    .hero-title { font-size: 20px; font-weight: 800; color: var(--text-main); margin-bottom: 8px; letter-spacing: -0.02em; }
+    .hero-copy { color: var(--text-muted); font-size: 14px; line-height: 1.7; }
+    .meta-row, .actions, .actions-right, .toolbar, .header-badges { display: flex; flex-wrap: wrap; }
+    .meta-row { gap: 10px; margin-top: 14px; }
+    .meta-pill, .inline-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.84);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      font-size: 12px;
+    }
+    .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .status-item {
+      padding: 18px;
+      background: linear-gradient(180deg, var(--surface-strong), var(--surface-soft));
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+    }
+    .status-label { font-size: 12px; color: var(--text-soft); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .status-value { font-size: 17px; font-weight: 700; color: var(--text-main); line-height: 1.35; }
+    .status-value.success { color: var(--success); }
+    .status-value.error { color: var(--danger); }
+    .status-value.warning { color: var(--warning); }
+    .btn {
+      padding: 12px 18px;
+      border: none;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+      color: white;
+      box-shadow: 0 10px 24px rgba(243,107,50,0.24);
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(243,107,50,0.28); }
+    .btn-secondary { background: #edf1f7; color: var(--text-main); border: 1px solid rgba(24,33,47,0.08); }
+    .btn-secondary:hover { background: #e4e9f2; }
+    .btn-danger { background: linear-gradient(135deg, #ef5350, #d83c3c); color: white; box-shadow: 0 10px 24px rgba(216,60,60,0.18); }
+    .btn-danger:hover { transform: translateY(-1px); }
     .btn-small { padding: 8px 16px; font-size: 13px; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-    .actions { margin-top: 20px; }
-    .actions-right { text-align: right; margin-top: 20px; }
+    .actions { margin-top: 20px; gap: 10px; }
+    .actions-right { justify-content: flex-end; gap: 10px; margin-top: 20px; }
     .form-group { margin-bottom: 16px; }
-    .form-label { display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 6px; }
-    .form-input { width: 100%; padding: 12px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
-    .form-input:focus { border-color: #FF6B35; }
-    .form-select { width: 100%; padding: 12px; border: 2px solid #E5E7EB; border-radius: 8px; font-size: 14px; outline: none; background: white; cursor: pointer; }
-    .form-select:focus { border-color: #FF6B35; }
-    .logs { background: #1F2937; border-radius: 8px; padding: 16px; max-height: 300px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; color: #9CA3AF; }
+    .form-label { display: block; font-size: 13px; font-weight: 700; color: var(--text-main); margin-bottom: 8px; }
+    .form-helper { font-size: 12px; color: var(--text-soft); margin-top: 6px; line-height: 1.5; }
+    .form-input, .form-select {
+      width: 100%;
+      padding: 13px 14px;
+      border: 1px solid rgba(24,33,47,0.1);
+      border-radius: 14px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+      background: rgba(255,255,255,0.96);
+      color: var(--text-main);
+    }
+    .form-input:focus, .form-select:focus {
+      border-color: rgba(243,107,50,0.5);
+      box-shadow: 0 0 0 4px rgba(243,107,50,0.12);
+      background: white;
+    }
+    .logs {
+      background: linear-gradient(180deg, #101926, #172233);
+      border-radius: 16px;
+      padding: 18px;
+      max-height: 320px;
+      overflow-y: auto;
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #9CA3AF;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
     .log-line { margin-bottom: 4px; }
     .log-time { color: #6B7280; }
     .log-info { color: #9CA3AF; }
     .log-error { color: #F87171; }
     .log-success { color: #34D399; }
     .log-warning { color: #FBBF24; }
-    .note { background: #FEF3C7; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 14px; color: #92400E; }
-    .note-info { background: #DBEAFE; color: #1E40AF; }
-    .footer { text-align: center; color: rgba(255,255,255,0.8); font-size: 12px; margin-top: 20px; }
+    .note {
+      background: #fff1cc;
+      border-radius: 14px;
+      padding: 13px 14px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      color: #915b0d;
+      border: 1px solid rgba(212,138,24,0.18);
+      line-height: 1.6;
+    }
+    .note-info { background: #e8f1ff; color: #1c4ea5; border-color: rgba(28,78,165,0.14); }
+    .note-success { background: #ddf8ee; color: #086247; border-color: rgba(8,98,71,0.12); }
+    .footer { text-align: center; color: rgba(255,255,255,0.72); font-size: 12px; margin-top: 20px; }
     #toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 24px; border-radius: 8px; color: white; font-weight: 500; opacity: 0; transition: all 0.3s; z-index: 1000; }
     #toast.show { opacity: 1; }
     #toast.success { background: #10B981; }
     #toast.error { background: #EF4444; }
     .wizard-steps { display: grid; gap: 16px; margin-bottom: 20px; }
-    .wizard-step { padding: 16px; border: 1px solid #E5E7EB; border-radius: 12px; background: #F9FAFB; }
-    .wizard-step-title { font-size: 14px; font-weight: 700; color: #1F2937; margin-bottom: 10px; }
-    .wizard-step-desc { font-size: 12px; color: #6B7280; margin-bottom: 10px; line-height: 1.5; }
+    .wizard-step {
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(246,248,252,0.96));
+    }
+    .wizard-step-title { font-size: 15px; font-weight: 800; color: var(--text-main); margin-bottom: 10px; letter-spacing: -0.01em; }
+    .wizard-step-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; }
     .section { margin-bottom: 24px; }
-    .section-title { font-size: 14px; font-weight: 600; color: #6B7280; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .divider { height: 1px; background: #E5E7EB; margin: 20px 0; }
-    .update-section { background: #F9FAFB; border-radius: 8px; padding: 16px; margin-top: 16px; }
+    .section-title { font-size: 13px; font-weight: 700; color: var(--text-soft); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .divider { height: 1px; background: var(--border); margin: 22px 0; }
+    .panel {
+      background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(246,248,252,0.95));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+    }
+    .panel-title { font-size: 15px; font-weight: 800; color: var(--text-main); margin-bottom: 8px; }
+    .panel-copy { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+    .update-section { background: linear-gradient(180deg, rgba(246,248,252,0.98), rgba(237,241,247,0.95)); border-radius: 18px; padding: 18px; margin-top: 16px; border: 1px solid var(--border); }
     .update-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #E5E7EB; }
     .update-item:last-child { border-bottom: none; }
-    .update-info h4 { font-size: 14px; color: #1F2937; margin-bottom: 4px; }
-    .update-info p { font-size: 12px; color: #6B7280; }
-    .help-section { background: #F9FAFB; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+    .update-info h4 { font-size: 14px; color: var(--text-main); margin-bottom: 4px; }
+    .update-info p { font-size: 12px; color: var(--text-muted); }
+    .help-section { background: #F9FAFB; border-radius: 16px; padding: 16px; margin-bottom: 20px; border: 1px solid var(--border); }
     .help-item { padding: 12px 0; border-bottom: 1px solid #E5E7EB; }
     .help-item:last-child { border-bottom: none; }
     .help-title { font-size: 14px; font-weight: 600; color: #1F2937; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
@@ -1072,10 +1562,10 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     .faq-q { font-weight: 600; color: #1F2937; margin-bottom: 4px; }
     .faq-a { color: #6B7280; font-size: 13px; line-height: 1.5; }
     /* Tab 样式 */
-    .tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 2px solid #E5E7EB; padding-bottom: 12px; }
-    .tab { padding: 10px 20px; border: none; background: transparent; font-size: 14px; font-weight: 500; color: #6B7280; cursor: pointer; border-radius: 8px 8px 0 0; transition: all 0.2s; }
-    .tab:hover { color: #FF6B35; background: #FFF7ED; }
-    .tab.active { color: #FF6B35; background: #FFF7ED; border-bottom: 2px solid #FF6B35; margin-bottom: -14px; }
+    .tabs { display: flex; gap: 10px; margin-bottom: 20px; padding: 8px; border-radius: 16px; background: #f2f5fa; border: 1px solid var(--border); }
+    .tab { flex: 1; padding: 12px 16px; border: none; background: transparent; font-size: 14px; font-weight: 700; color: var(--text-soft); cursor: pointer; border-radius: 12px; transition: all 0.2s; }
+    .tab:hover { color: var(--brand-dark); background: rgba(255,255,255,0.72); }
+    .tab.active { color: var(--brand-dark); background: white; box-shadow: 0 8px 18px rgba(24,33,47,0.06); }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     /* 技能卡片 */
@@ -1098,15 +1588,65 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     .installed-list { margin-top: 20px; }
     .installed-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #F9FAFB; border-radius: 8px; margin-bottom: 8px; }
     .installed-name { font-weight: 500; color: #1F2937; }
+    .service-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr);
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .service-actions, .service-side { height: 100%; }
+    .muted { color: var(--text-muted); }
+    .mono { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+    .small { font-size: 12px; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-width: 720px) {
+      body { padding: 14px; }
+      .card { padding: 20px; border-radius: 18px; }
+      .header { padding-top: 10px; }
+      .header-main { align-items: flex-start; }
+      .service-hero, .status-grid { grid-template-columns: 1fr; }
+      .tabs { flex-direction: column; }
+      .tab { width: 100%; }
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">🦞</div>
-      <div class="title">龙虾助手</div>
-      <div class="subtitle">OpenClaw 一键部署工具</div>
-      <div class="version">v${VERSION}</div>
+      <div class="header-main">
+        <div class="logo" aria-label="OpenClaw logo">
+          <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <defs>
+              <linearGradient id="openclaw-logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#ff4d4d"/>
+                <stop offset="100%" stop-color="#991b1b"/>
+              </linearGradient>
+            </defs>
+            <path d="M60 10 C30 10 15 35 15 55 C15 75 30 95 45 100 L45 110 L55 110 L55 100 C55 100 60 102 65 100 L65 110 L75 110 L75 100 C90 95 105 75 105 55 C105 35 90 10 60 10Z" fill="url(#openclaw-logo-gradient)"/>
+            <path d="M20 45 C5 40 0 50 5 60 C10 70 20 65 25 55 C28 48 25 45 20 45Z" fill="url(#openclaw-logo-gradient)"/>
+            <path d="M100 45 C115 40 120 50 115 60 C110 70 100 65 95 55 C92 48 95 45 100 45Z" fill="url(#openclaw-logo-gradient)"/>
+            <path d="M45 15 Q35 5 30 8" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round"/>
+            <path d="M75 15 Q85 5 90 8" stroke="#ff4d4d" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="45" cy="35" r="6" fill="#050810"/>
+            <circle cx="75" cy="35" r="6" fill="#050810"/>
+            <circle cx="46" cy="34" r="2.5" fill="#00e5cc"/>
+            <circle cx="76" cy="34" r="2.5" fill="#00e5cc"/>
+          </svg>
+        </div>
+        <div>
+          <div class="title">龙虾助手</div>
+          <div class="subtitle">把 OpenClaw 的授权、部署、配置和运行都收进一个本地控制台。</div>
+          <div class="version">v${VERSION}</div>
+        </div>
+      </div>
+      <div class="header-badges">
+        <div class="badge">本地控制台</div>
+        <div class="badge">自动更新</div>
+        <div class="badge">OpenClaw 引导式配置</div>
+      </div>
     </div>
     <div id="main-card" class="card"></div>
     <div class="footer">© 2024 龙虾助手 · 让 AI 触手可及</div>
@@ -1114,7 +1654,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
   <div id="toast"></div>
   <script>
     const PROVIDERS = ${JSON.stringify(PROVIDERS)};
-    // 默认选择当前 provider 的默认模型；custom 不展示预设推荐模型
+    // 默认选择当前 provider 的默认模型
     const defaultProvider = '${config.provider || 'anthropic'}';
     const defaultModel = defaultProvider === 'custom'
       ? ('${config.customModelId || config.model || ''}')
@@ -1122,10 +1662,12 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     const state = {
       config: ${JSON.stringify(config)},
       status: ${JSON.stringify(status)},
+      purchaseUrl: '${getPurchaseUrl(config)}',
       logs: [],
       selectedProvider: defaultProvider,
       selectedModel: defaultModel,
       currentTab: 'status',
+      currentView: 'dashboard',
       skillsLoaded: false,
       helpLoaded: false,
       customWizard: {
@@ -1196,6 +1738,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     }
 
     function render() {
+      state.currentView = 'dashboard';
       const card = $('main-card');
       const c = state.config, s = state.status;
 
@@ -1203,13 +1746,28 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       if (!c.activated) {
         card.innerHTML = \`
           <h2 class="card-title">🔐 激活产品</h2>
-          <div class="note note-info">请输入您购买的激活码来激活产品</div>
+          <div class="hero-panel">
+            <div class="hero-kicker">Activation</div>
+            <div class="hero-title">先完成激活，再进入部署和运行</div>
+            <div class="hero-copy">输入购买得到的激活码即可完成当前设备绑定。激活成功后，会自动进入 OpenClaw 的部署与配置流程。</div>
+            <div class="meta-row">
+              <div class="meta-pill">一机一绑定</div>
+              <div class="meta-pill">服务端校验</div>
+              <div class="meta-pill">支持购买后即刻激活</div>
+            </div>
+          </div>
           <div class="form-group">
             <label class="form-label">激活码</label>
             <input type="text" id="code" class="form-input" placeholder="XXXX-XXXX-XXXX-XXXX" style="text-transform: uppercase; letter-spacing: 2px;">
+            <div class="form-helper">输入时可以带分隔符，系统会自动规范化并提交到授权服务器验证。</div>
           </div>
           <div class="actions">
             <button class="btn btn-primary" onclick="activate()">激活</button>
+            <a class="btn btn-secondary" href="\${state.purchaseUrl}" target="_blank" rel="noopener noreferrer">购买激活码</a>
+          </div>
+          <div class="panel" style="margin-top:14px">
+            <div class="panel-title">还没有激活码？</div>
+            <div class="panel-copy">点击“购买激活码”会打开购买页面。购买后回到这里输入激活码即可继续，不需要额外切换到命令行。</div>
           </div>
         \`;
         return;
@@ -1221,12 +1779,18 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         const deployIsCustom = state.selectedProvider === 'custom';
         card.innerHTML = \`
           <h2 class="card-title">📦 部署 OpenClaw</h2>
-          <div class="note note-info">部署阶段也按顺序填写模型接入信息，不再使用推荐模型卡片。</div>
+          <div class="hero-panel">
+            <div class="hero-kicker">Deploy</div>
+            <div class="hero-title">先确定模型接入方式，再落到本地部署</div>
+            <div class="hero-copy">先选模型接入方式，再完成本地部署。常见服务可以快速配置，自定义接入则需要先完成连接验证。</div>
+          </div>
+
+          <div class="note note-info">部署前会先跑一次性环境预检，缺依赖、端口冲突、安装路径异常会在开始前集中给出。</div>
 
           <div class="wizard-steps">
             <div class="wizard-step">
               <div class="wizard-step-title">第 1 步：选择 Provider</div>
-              <div class="wizard-step-desc">先确定是使用 OpenClaw 预设 provider，还是走 custom onboarding。</div>
+              <div class="wizard-step-desc">先选择你要接入的模型服务。常见服务可以直接选，自定义服务则需要手动填写连接信息。</div>
               <select id="deployProvider" class="form-select" onchange="selectProvider(this.value)">
                 \${renderProviderOptions()}
               </select>
@@ -1235,7 +1799,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
             <div class="wizard-step">
               <div class="wizard-step-title">第 2 步：填写模型与认证</div>
               \${deployIsCustom ? \`
-                <div class="wizard-step-desc">custom 不提供推荐模型。请按 OpenClaw 官方 custom onboarding 的顺序填写。</div>
+                <div class="wizard-step-desc">自定义接入时，请先填写地址和密钥，再确认接口类型与模型名称。</div>
                 <div class="form-group">
                   <label class="form-label">API Key</label>
                   <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
@@ -1245,7 +1809,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
                   <input type="text" id="deployBaseUrl" class="form-input" value="\${c.baseUrl || ''}" placeholder="例如: https://api.example.com/v1">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Endpoint compatibility</label>
+                  <label class="form-label">接口类型</label>
                   <select id="deployApiFormat" class="form-select">
                     <option value="openai" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
                     <option value="anthropic" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'anthropic' ? 'selected' : ''}>Anthropic-compatible</option>
@@ -1257,7 +1821,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
                   <input type="text" id="deployCustomModelId" class="form-input" value="\${c.customModelId || c.model || ''}" placeholder="例如: glm-5">
                 </div>
               \` : \`
-                <div class="wizard-step-desc">预设 provider 只保留 provider 与 model 的源码语义，不再展示推荐卡片。</div>
+                <div class="wizard-step-desc">常见服务只需要选模型并填写 API Key，不需要额外步骤。</div>
                 <div class="form-group">
                   <label class="form-label">Model</label>
                   <select id="deployModel" class="form-select" onchange="selectModel(this.value)">
@@ -1285,12 +1849,12 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
           </div>
 
           <div class="section">
-            <div class="form-group">
-              <label class="form-label">说明</label>
-              <div class="note note-info" style="margin-bottom:0">
+            <div class="panel">
+              <div class="panel-title">部署说明</div>
+              <div class="panel-copy">
                 \${deployIsCustom
-                  ? 'custom provider 会在部署后继续沿用 OpenClaw 的 custom provider 配置语义。'
-                  : '预设 provider 仅作为快捷模板，最终仍由 OpenClaw 网关读取生成的配置。'}
+                  ? '自定义接入会保留你填写的地址、接口类型、模型名称和别名，后续启动时直接沿用。'
+                  : '常见服务这里会自动生成对应配置，保存后可以直接启动 OpenClaw。'}
               </div>
             </div>
           </div>
@@ -1312,6 +1876,31 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
         <!-- 服务 Tab -->
         <div id="tab-status" class="tab-content \${state.currentTab === 'status' || !state.currentTab ? 'active' : ''}">
+          <div class="service-hero">
+            <div class="hero-panel service-actions">
+              <div class="hero-kicker">Service</div>
+              <div class="hero-title">\${s.running ? 'OpenClaw 正在运行' : 'OpenClaw 当前未启动'}</div>
+              <div class="hero-copy">\${s.running ? '网关已经就绪，可以直接打开 OpenClaw，或者复制自动认证链接给当前浏览器会话使用。' : '先确认 API 配置无误，再启动本地网关。启动失败时，可直接在下方查看运行日志。'}</div>
+              <div class="actions">
+                \${s.running
+                  ? '<button class="btn btn-danger" onclick="stop()">⏹ 停止服务</button>'
+                  : '<button class="btn btn-primary" onclick="start()">▶ 启动服务</button>'
+                }
+                <button class="btn btn-secondary" onclick="showConfig()">⚙️ 配置</button>
+                \${s.running ? '<button class="btn btn-secondary" onclick="openGateway()">🌐 打开 OpenClaw</button>' : ''}
+              </div>
+            </div>
+            <div class="panel service-side">
+              <div class="panel-title">当前运行要点</div>
+              <div class="panel-copy">
+                Web 控制台：<span class="mono">http://localhost:${config.webPort || DEFAULT_WEB_PORT}</span><br>
+                Gateway 端口：<span class="mono">\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}</span><br>
+                模型接入：<span class="mono">\${c.provider || '未配置'} / \${c.model || '未配置'}</span>
+              </div>
+              \${s.running ? '<div class="actions" style="margin-top:14px"><button class="btn btn-secondary btn-small" onclick="copyGatewayLink()">🔗 复制自动认证链接</button></div>' : ''}
+            </div>
+          </div>
+
           <div class="status-grid">
             <div class="status-item">
               <div class="status-label">服务状态</div>
@@ -1331,20 +1920,10 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
             </div>
           </div>
 
-          <div class="actions">
-            \${s.running
-              ? '<button class="btn btn-danger" onclick="stop()">⏹ 停止服务</button>'
-              : '<button class="btn btn-primary" onclick="start()">▶ 启动服务</button>'
-            }
-            <button class="btn btn-secondary" onclick="showConfig()">⚙️ 配置</button>
-            \${s.running ? '<button class="btn btn-secondary" onclick="openGateway()">🌐 打开 OpenClaw</button>' : ''}
-            \${s.running ? '<button class="btn btn-secondary" onclick="copyGatewayLink()">🔗 复制自动认证链接</button>' : ''}
-          </div>
-
           \${s.running && s.gatewayToken ? \`
-            <div class="note note-info" style="margin-top:12px">
-              Gateway Token: <code style="word-break:break-all">\${s.gatewayToken}</code><br>
-              “打开 OpenClaw” 会自动带上 token。只有手动打开其它浏览器标签页时，才需要去 Control UI settings 粘贴它。
+            <div class="note note-info" style="margin-top:14px">
+              访问令牌：<code style="word-break:break-all">\${s.gatewayToken}</code><br>
+              使用“打开 OpenClaw”或“复制自动认证链接”时会自动带上它。只有你自己手动打开新标签页时，才需要把它填进网页设置里。
             </div>
           \` : ''}
 
@@ -1370,6 +1949,19 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
           <div class="divider"></div>
 
+          <div class="panel">
+            <div class="panel-title">卸载 OpenClaw</div>
+            <div class="panel-copy">
+              会先停止网关，再删除 OpenClaw 安装目录、<span class="mono">~/.openclaw</span> 运行缓存、临时日志目录，并清空当前部署配置。
+              产品激活状态会保留，不会把龙虾助手本身一起卸掉。
+            </div>
+            <div class="actions" style="margin-top:14px">
+              <button class="btn btn-danger" onclick="uninstallOpenClaw()">🗑️ 彻底卸载 OpenClaw</button>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
           <h3 style="font-size:14px;color:#1F2937;margin-bottom:12px">📋 运行日志</h3>
           <div class="logs" id="logs"><div class="log-line log-info">等待操作...</div></div>
         </div>
@@ -1377,13 +1969,31 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         <!-- 技能市场 Tab -->
         <div id="tab-skills" class="tab-content \${state.currentTab === 'skills' ? 'active' : ''}">
           <div class="note note-info" style="margin-bottom: 16px;">
-            🧩 技能可以扩展 AI 的能力，如搜索、文档处理、代码操作等。点击安装后重启服务即可使用。
+            🧩 OpenClaw 的技能市场是 ClawHub。先去市场里挑技能，记住 skill id，再回到这里安装。
+          </div>
+          <div class="panel" style="margin-bottom:16px">
+            <div class="panel-title">官方技能市场</div>
+            <div class="panel-copy">
+              直接去 <span class="mono">clawhub.ai</span> 浏览技能详情、安装说明和依赖要求。这个页面只负责执行安装和查看已安装结果，不再内置一份本地热门技能假列表。
+            </div>
+            <div class="actions" style="margin-top:14px">
+              <a class="btn btn-primary" href="${CLAWHUB_MARKET_URL}" target="_blank" rel="noopener">打开 ClawHub</a>
+              <button class="btn btn-secondary" onclick="refreshInstalledSkills()">刷新已安装</button>
+            </div>
           </div>
 
-          <div class="category-filter" id="category-filter"></div>
-
-          <div class="skill-grid" id="skill-grid">
-            <div style="text-align:center;padding:40px;color:#9CA3AF;">加载中...</div>
+          <div class="panel" style="margin-bottom:16px">
+            <div class="panel-title">按 skill id 安装</div>
+            <div class="panel-copy">
+              在 ClawHub 找到技能后，把技能 id 粘贴到下面。例如 <span class="mono">tavily-search</span> 或 <span class="mono">github</span>。
+            </div>
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;margin-top:14px">
+              <input id="skill-id-input" class="input" placeholder="输入 skill id，例如 tavily-search" />
+              <button class="btn btn-primary" onclick="installSkillFromInput()">安装技能</button>
+            </div>
+            <div style="margin-top:10px;font-size:12px;color:#6B7280">
+              安装后通常需要重启 OpenClaw 服务，技能才会出现在实际会话里。
+            </div>
           </div>
 
           <div class="divider"></div>
@@ -1459,76 +2069,32 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     // 技能市场
     // ============================================
 
-    let allSkills = [];
     let installedSkills = [];
-    let selectedCategory = '全部';
 
     async function loadSkills() {
-      // 加载热门技能
-      const popularRes = await api('skills/popular');
-      if (popularRes.success) {
-        allSkills = popularRes.skills;
-        renderCategoryFilter();
-        renderSkillGrid();
-      }
-
-      // 加载已安装技能
-      const installedRes = await api('skills/installed');
-      if (installedRes.success) {
-        installedSkills = installedRes.skills;
-        renderInstalledSkills();
-      }
-
+      await refreshInstalledSkills();
       state.skillsLoaded = true;
     }
 
-    function renderCategoryFilter() {
-      const el = $('category-filter');
-      if (!el) return;
-      const categories = ['全部', ...new Set(allSkills.map(s => s.category))];
-      el.innerHTML = categories.map(cat => \`
-        <button class="category-btn \${selectedCategory === cat ? 'active' : ''}" onclick="filterCategory('\${cat}')">\${cat}</button>
-      \`).join('');
+    async function refreshInstalledSkills() {
+      const installedRes = await api('skills/installed');
+      if (installedRes.success) {
+        installedSkills = Array.isArray(installedRes.skills) ? installedRes.skills : [];
+        renderInstalledSkills();
+      } else {
+        toast(installedRes.error || '无法读取已安装技能', 'error');
+      }
     }
 
-    function filterCategory(cat) {
-      selectedCategory = cat;
-      renderCategoryFilter();
-      renderSkillGrid();
-    }
-
-    function renderSkillGrid() {
-      const el = $('skill-grid');
-      if (!el) return;
-
-      const filtered = selectedCategory === '全部'
-        ? allSkills
-        : allSkills.filter(s => s.category === selectedCategory);
-
-      if (filtered.length === 0) {
-        el.innerHTML = '<div style="text-align:center;padding:40px;color:#9CA3AF;">暂无技能</div>';
+    function installSkillFromInput() {
+      const input = $('skill-id-input');
+      const skillId = (input?.value || '').trim();
+      if (!skillId) {
+        toast('请先输入 skill id', 'error');
+        input?.focus();
         return;
       }
-
-      el.innerHTML = filtered.map(skill => {
-        const isInstalled = installedSkills.includes(skill.id);
-        return \`
-          <div class="skill-card">
-            <div class="skill-header">
-              <span class="skill-icon">\${skill.icon}</span>
-              <span class="skill-name">\${skill.name}</span>
-            </div>
-            <div class="skill-desc">\${skill.desc}</div>
-            <div class="skill-footer">
-              <span class="skill-stars">⭐ \${skill.stars}</span>
-              \${isInstalled
-                ? '<span class="skill-installed">✓ 已安装</span>'
-                : \`<button class="btn btn-primary btn-small" onclick="installSkill('\${skill.id}')">安装</button>\`
-              }
-            </div>
-          </div>
-        \`;
-      }).join('');
+      installSkill(skillId);
     }
 
     function renderInstalledSkills() {
@@ -1540,13 +2106,20 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         return;
       }
 
-      el.innerHTML = installedSkills.map(skillId => {
-        const skill = allSkills.find(s => s.id === skillId);
-        const name = skill ? skill.name : skillId;
+      el.innerHTML = installedSkills.map(skill => {
+        const removable = skill.removable !== false;
         return \`
           <div class="installed-item">
-            <span class="installed-name">\${name}</span>
-            <button class="btn btn-secondary btn-small" onclick="uninstallSkill('\${skillId}')">卸载</button>
+            <div>
+              <div class="installed-name">\${skill.name || skill.id}</div>
+              <div style="font-size:12px;color:#6B7280;margin-top:4px">
+                skill id: <span class="mono">\${skill.id}</span> · 来源：\${skill.source || '未知'}
+              </div>
+            </div>
+            \${removable
+              ? \`<button class="btn btn-secondary btn-small" onclick="uninstallSkill('\${skill.id}')">卸载</button>\`
+              : '<span class="skill-installed">只读</span>'
+            }
           </div>
         \`;
       }).join('');
@@ -1557,13 +2130,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const res = await api('skills/install', { skill: skillId });
       if (res.success) {
         toast(res.message || '安装成功！');
-        // 刷新已安装列表
-        const installedRes = await api('skills/installed');
-        if (installedRes.success) {
-          installedSkills = installedRes.skills;
-          renderSkillGrid();
-          renderInstalledSkills();
-        }
+        const input = $('skill-id-input');
+        if (input) input.value = '';
+        await refreshInstalledSkills();
       } else {
         toast(res.error || '安装失败', 'error');
       }
@@ -1575,13 +2144,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const res = await api('skills/uninstall', { skill: skillId });
       if (res.success) {
         toast(res.message || '卸载成功！');
-        // 刷新已安装列表
-        const installedRes = await api('skills/installed');
-        if (installedRes.success) {
-          installedSkills = installedRes.skills;
-          renderSkillGrid();
-          renderInstalledSkills();
-        }
+        await refreshInstalledSkills();
       } else {
         toast(res.error || '卸载失败', 'error');
       }
@@ -1597,52 +2160,20 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
       el.innerHTML = \`
         <div class="help-section">
-          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">🚀 快速开始</h3>
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">🧭 OpenClaw 使用总览</h3>
           <div class="help-item">
-            <div class="help-title">1. 启动服务</div>
-            <div class="help-content">点击"启动服务"按钮，等待服务启动完成后，点击"打开 OpenClaw"进入 AI 对话界面。</div>
-          </div>
-          <div class="help-item">
-            <div class="help-title">2. 安装技能</div>
-            <div class="help-content">在"技能市场"中选择需要的技能并安装。技能可以扩展 AI 的能力，如搜索、文档处理等。</div>
-          </div>
-          <div class="help-item">
-            <div class="help-title">3. 开始对话</div>
-            <div class="help-content">打开 OpenClaw 后，直接输入问题即可开始对话。AI 会根据你安装的技能自动调用相应功能。</div>
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="help-section">
-          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">💬 常用对话示例</h3>
-          <div class="help-item">
-            <div class="help-title">🔍 搜索信息</div>
+            <div class="help-title">OpenClaw 不是单纯聊天页</div>
             <div class="help-content">
-              <ul>
-                <li>"帮我搜索一下 Claude 最新版本的功能"</li>
-                <li>"查一下今天北京的天气"</li>
-                <li>"搜索 React 19 的新特性"</li>
-              </ul>
+              OpenClaw 更像一个本地 AI 工作台：它有网关、模型接入、技能扩展、浏览器控制和会话状态。你真正要掌握的不是“怎么打开页面”，而是“怎样让 AI 在一个稳定环境里持续完成任务”。
             </div>
           </div>
           <div class="help-item">
-            <div class="help-title">📄 处理文档</div>
+            <div class="help-title">建议的使用顺序</div>
             <div class="help-content">
               <ul>
-                <li>"帮我总结这个网页的内容：https://..."</li>
-                <li>"把这个 PDF 转换成 Markdown"</li>
-                <li>"帮我编辑这个 PDF，把标题改成..."</li>
-              </ul>
-            </div>
-          </div>
-          <div class="help-item">
-            <div class="help-title">💻 代码相关</div>
-            <div class="help-content">
-              <ul>
-                <li>"帮我查看 GitHub 上的 issue #123"</li>
-                <li>"创建一个 PR 到 main 分支"</li>
-                <li>"解释这段代码的作用"</li>
+                <li>先确认当前模型可正常回复，再开始长任务。</li>
+                <li>再决定是否需要安装技能，不要一开始装太多。</li>
+                <li>最后进入对话，让 AI 先理解目标、输出计划，再开始执行。</li>
               </ul>
             </div>
           </div>
@@ -1651,18 +2182,180 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         <div class="divider"></div>
 
         <div class="help-section">
-          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">❓ 常见问题</h3>
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">💬 推荐对话方式</h3>
+          <div class="help-item">
+            <div class="help-title">1. 先给目标，再给限制</div>
+            <div class="help-content">
+              <ul>
+                <li>"帮我整理一份这周的产品更新总结，给非技术同事看。"</li>
+                <li>"不要泛泛而谈，按变化点、影响、风险三段输出。"</li>
+                <li>"如果信息不够，先问我最多 3 个补充问题。"</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">2. 长任务先让它给计划</div>
+            <div class="help-content">
+              <ul>
+                <li>"先列一个执行计划，不要立刻开始改。"</li>
+                <li>"把任务拆成：信息收集、方案、执行、验证。"</li>
+                <li>"每完成一段给我一个可检查的结果。"</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">3. 让 AI 用结构化格式回答</div>
+            <div class="help-content">
+              <ul>
+                <li>"按问题、原因、建议三列输出。"</li>
+                <li>"最后只给我可执行结论，不要铺垫。"</li>
+                <li>"如果存在不确定性，请单独列出。"</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="help-section">
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">🧩 技能与能力边界</h3>
+          <div class="help-item">
+            <div class="help-title">什么时候该装技能</div>
+            <div class="help-content">
+              如果你只是普通问答、写作、总结、翻译，通常不需要额外技能。只有当你希望 OpenClaw 去搜索网页、读写特定资源、连接第三方服务时，技能才真正有价值。
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">技能装完以后怎么用</div>
+            <div class="help-content">
+              技能不是菜单按钮。正确方式是在对话里直接说需求，例如：
+              <ul>
+                <li>"搜索最近三天关于 Anthropic 的发布更新。"</li>
+                <li>"把这个网页总结成 5 条给老板看的要点。"</li>
+                <li>"检查这个仓库里和认证相关的代码。"</li>
+              </ul>
+              模型会自行决定是否调用已安装技能。
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">为什么技能装了却像没生效</div>
+            <div class="help-content">
+              常见原因有三个：
+              <ul>
+                <li>安装后没有重启 OpenClaw。</li>
+                <li>当前模型本身工具调用能力偏弱。</li>
+                <li>你的提问方式太像普通聊天，没有明确需要外部能力。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="help-section">
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">🧠 模型选择与切换</h3>
+          <div class="help-item">
+            <div class="help-title">什么时候切模型</div>
+            <div class="help-content">
+              <ul>
+                <li>需要稳定工具调用和长上下文时，优先选更稳的主力模型。</li>
+                <li>需要便宜、快、批量处理时，再换轻量模型。</li>
+                <li>遇到回答飘、工具不触发、长任务跑偏时，先换模型再怀疑技能。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">自定义模型接入怎么理解</div>
+            <div class="help-content">
+              自定义接入不是“随便填个代理地址”。正确顺序是：
+              <ul>
+                <li>先填 Base URL 和 API Key。</li>
+                <li>再选接口类型。</li>
+                <li>再填 Model ID 并验证。</li>
+                <li>验证通过后再保存连接名称和模型别名。</li>
+              </ul>
+              如果验证不过，不要继续往下配，否则后面所有问题都会混在一起。
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="help-section">
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">🔐 Gateway Token 与浏览器会话</h3>
+          <div class="help-item">
+            <div class="help-title">为什么有时会提示缺少访问令牌</div>
+            <div class="help-content">
+              OpenClaw 网页和本地网关之间需要访问令牌。如果你不是从“打开 OpenClaw”按钮进入，而是自己手动输入地址打开新标签页，就可能没有把令牌一起带上。
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">推荐打开方式</div>
+            <div class="help-content">
+              优先使用“打开 OpenClaw”或“复制自动认证链接”。这样浏览器会自动带上 token，不需要你手动去设置里粘贴。
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="help-section">
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">🛠️ 进阶排查</h3>
+          <div class="help-item">
+            <div class="help-title">启动失败时先看什么</div>
+            <div class="help-content">
+              先看服务页日志，不要直接猜。
+              <ul>
+                <li>如果是 API Key / Base URL 问题，通常会在启动早期看到认证或连接错误。</li>
+                <li>如果是端口问题，会看到端口被占用或进程立即退出。</li>
+                <li>如果是技能或依赖问题，往往发生在网关起来之后的初始化阶段。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">最常见的三种误判</div>
+            <div class="help-content">
+              <ul>
+                <li>模型能聊天，不代表技能一定可用。</li>
+                <li>服务启动了，不代表浏览器会话已经带上 token。</li>
+                <li>更新成功，不代表你当前配置一定还适配新版本模型接口。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="help-item">
+            <div class="help-title">一套稳妥的恢复流程</div>
+            <div class="help-content">
+              如果你把当前环境折腾乱了，建议按这个顺序恢复：
+              <ul>
+                <li>先停止服务。</li>
+                <li>重新验证 API 配置。</li>
+                <li>只保留必要技能。</li>
+                <li>再启动服务并观察日志前 30 秒。</li>
+                <li>如果仍然异常，再考虑更新或彻底卸载重装。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="help-section">
+          <h3 style="font-size:16px;color:#1F2937;margin-bottom:16px">📌 常见高质量提问模板</h3>
           <div class="faq-item">
-            <div class="faq-q">Q: 技能安装后怎么使用？</div>
-            <div class="faq-a">A: 安装技能后需要重启服务，然后直接在对话中提问即可。AI 会自动判断是否需要使用技能。</div>
+            <div class="faq-q">研究型任务</div>
+            <div class="faq-a">"帮我研究这个主题，先列出信息来源和判断框架，再给结论。不要只给一段概述。"</div>
           </div>
           <div class="faq-item">
-            <div class="faq-q">Q: 如何更换 AI 模型？</div>
-            <div class="faq-a">A: 点击"配置"按钮，在配置页面选择新的模型和 API Key，保存后重启服务即可。</div>
+            <div class="faq-q">文档处理</div>
+            <div class="faq-a">"先提炼结构，再按目标读者重写，最后列出你删掉了哪些冗余内容。"</div>
           </div>
           <div class="faq-item">
-            <div class="faq-q">Q: 服务启动失败怎么办？</div>
-            <div class="faq-a">A: 请检查：1) API Key 是否正确；2) 端口是否被占用；3) 查看运行日志了解具体错误。</div>
+            <div class="faq-q">代码分析</div>
+            <div class="faq-a">"先定位文件和调用链，再按 bug、风险、修复建议输出，不要先讲背景。"</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">连续协作</div>
+            <div class="faq-a">"每次只做一步，做完给我当前状态和下一步建议，不要一次性跑满。"</div>
           </div>
         </div>
       \`;
@@ -1679,6 +2372,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     }
 
     async function deploy() {
+      state.currentView = 'deploy';
       const installPath = $('path').value;
       const gatewayPort = parseInt($('port').value);
       const apiKey = $('apiKey').value;
@@ -1832,7 +2526,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       if (mode === 'model' || mode === 'both') $('customModelId')?.focus();
       if (resultEl) {
         resultEl.style.display = 'block';
-        resultEl.innerHTML = '<div class="note note-info">请按 OpenClaw 源码的重试分支修改字段后，再次点击“验证 Endpoint”。</div>';
+        resultEl.innerHTML = '<div class="note note-info">请修改刚才失败的地址或模型名称，然后再次点击“验证连接”。</div>';
       }
     }
 
@@ -1857,6 +2551,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     }
 
     function showConfig() {
+      state.currentView = 'config';
       const card = $('main-card');
       const c = state.config;
       const currentProvider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
@@ -1864,10 +2559,15 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
       card.innerHTML = \`
         <h2 class="card-title">⚙️ API 配置</h2>
+        <div class="hero-panel">
+          <div class="hero-kicker">Configuration</div>
+          <div class="hero-title">\${isCustom ? '按顺序完成自定义模型接入' : '快速完成常见模型配置'}</div>
+          <div class="hero-copy">\${isCustom ? '请先填地址和密钥，再确认接口类型、模型名称并完成连接验证。验证通过后再保存。' : '常见服务只需要选择模型并填写 API Key，保存后就能直接使用。'}</div>
+        </div>
         <div class="wizard-steps">
           <div class="wizard-step">
             <div class="wizard-step-title">第 1 步：选择 Provider</div>
-            <div class="wizard-step-desc">先确定是使用 OpenClaw 预设 provider，还是进入 custom provider onboarding。</div>
+            <div class="wizard-step-desc">先选择你要接入的模型服务。常见服务可快速配置，自定义服务需要手动验证连接。</div>
             <select id="configProvider" class="form-select" onchange="selectProvider(this.value)">
               \${renderProviderOptions()}
             </select>
@@ -1875,7 +2575,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
           <div class="wizard-step">
             <div class="wizard-step-title">第 2 步：提供凭证</div>
-            <div class="wizard-step-desc">\${isCustom ? 'custom provider 先填 Base URL 和 API Key。' : '预设 provider 只保留 provider、model、api key 这三个核心输入。'}</div>
+            <div class="wizard-step-desc">\${isCustom ? '自定义服务先填地址和密钥。' : '常见服务只需要这三个关键输入：服务、模型、API Key。'}</div>
             <div class="form-group">
               <label class="form-label">API Key</label>
               <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key" \${isCustom ? 'oninput="resetCustomWizard()"' : ''}>
@@ -1890,10 +2590,10 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
           \${isCustom ? \`
           <div class="wizard-step">
-            <div class="wizard-step-title">第 3 步：OpenClaw Custom Onboarding</div>
-            <div class="wizard-step-desc">这部分按 OpenClaw 源码顺序：compatibility -> model id -> verify -> endpoint id -> alias。</div>
+            <div class="wizard-step-title">第 3 步：验证自定义连接</div>
+            <div class="wizard-step-desc">依次确认接口类型、模型名称，验证通过后再保存连接名称和模型别名。</div>
             <div class="form-group">
-              <label class="form-label">Endpoint compatibility</label>
+              <label class="form-label">接口类型</label>
               <select id="apiFormat" class="form-select" onchange="resetCustomWizard()">
                 <option value="openai" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
                 <option value="anthropic" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'anthropic' ? 'selected' : ''}>Anthropic-compatible</option>
@@ -1909,7 +2609,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
               <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrl(c.baseUrl || currentProvider.baseUrl || '') || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
             </div>
             <div class="form-group">
-              <label class="form-label">Model alias (optional)</label>
+              <label class="form-label">模型别名（可选）</label>
               <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: glm">
             </div>
             <div id="custom-wizard-result" style="margin-top:12px">
@@ -1919,7 +2619,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
           \` : \`
           <div class="wizard-step">
             <div class="wizard-step-title">第 3 步：选择 Model</div>
-            <div class="wizard-step-desc">预设 provider 不再显示推荐模型卡片，只保留源码语义上的 model 选择。</div>
+            <div class="wizard-step-desc">选择你实际要使用的模型即可。</div>
             <select id="presetModel" class="form-select" onchange="selectModel(this.value)">
               \${renderModelOptions(state.selectedProvider, state.selectedModel)}
             </select>
@@ -1992,7 +2692,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         if (isCustom) {
           state.customWizard.verified = true;
           state.customWizard.retryMode = '';
-          state.customWizard.message = '验证成功。输入顺序、验证行为和落盘配置将按 OpenClaw custom onboarding 语义保存。';
+          state.customWizard.message = '验证成功。当前地址、接口类型和模型名称可以正常使用，保存后会直接按这组配置启动。';
           state.customWizard.suggestedEndpointId = suggestedEndpointId;
           if ($('apiFormat')) $('apiFormat').value = resolvedCompatibility;
         }
@@ -2052,6 +2752,23 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       else toast(res.error || '保存失败', 'error');
     }
 
+    async function uninstallOpenClaw() {
+      const confirmed = confirm('这会停止当前 OpenClaw 服务，并删除安装目录、运行缓存、临时日志和部署配置。产品激活状态会保留。确定继续吗？');
+      if (!confirmed) return;
+
+      showLoading('正在彻底卸载 OpenClaw...');
+      const res = await api('uninstall-openclaw', {}, 180000);
+      if (res.success) {
+        state.config = res.config || {};
+        state.status = res.status || { running: false, installed: false };
+        toast(res.message || 'OpenClaw 已卸载');
+        render();
+      } else {
+        toast(res.error || '卸载失败', 'error');
+        render();
+      }
+    }
+
     async function updateOpenClaw() {
       toast('检查更新中...');
       const res = await api('update-openclaw');
@@ -2086,7 +2803,12 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     render();
     setInterval(async () => {
       const res = await api('status');
-      if (res.status) { state.status = res.status; render(); }
+      if (res.status) {
+        state.status = res.status;
+        if (state.currentView === 'dashboard') {
+          render();
+        }
+      }
     }, 5000);
   </script>
 </body>
@@ -2151,6 +2873,15 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
     case 'license':
       return verifyLicenseStatus(config);
 
+    case 'skills/installed':
+      return { success: true, skills: await getInstalledOpenClawSkillsFromStatus(config) };
+
+    case 'skills/install':
+      return handleSkillInstall(data, config);
+
+    case 'skills/uninstall':
+      return handleSkillUninstall(data, config);
+
     default:
       // 其他操作使用同步处理
       return handleAPI(action, data, config);
@@ -2168,6 +2899,9 @@ function handleAPI(action: string, data: Record<string, unknown>, config: Record
     case 'update-openclaw':
       return handleUpdateOpenClaw(config);
 
+    case 'uninstall-openclaw':
+      return handleUninstallOpenClaw(config);
+
     case 'system-info':
       return {
         success: true,
@@ -2184,36 +2918,10 @@ function handleAPI(action: string, data: Record<string, unknown>, config: Record
     // ============================================
 
     case 'skills/popular':
-      return { success: true, skills: POPULAR_SKILLS, categories: SKILL_CATEGORIES };
+      return { success: true, skills: [], marketUrl: CLAWHUB_MARKET_URL };
 
     case 'skills/search':
-      const query = (data.query as string || '').toLowerCase();
-      if (!query) return { success: true, skills: POPULAR_SKILLS };
-      const filtered = POPULAR_SKILLS.filter(s =>
-        s.name.toLowerCase().includes(query) ||
-        s.desc.toLowerCase().includes(query) ||
-        s.category.toLowerCase().includes(query)
-      );
-      return { success: true, skills: filtered };
-
-    case 'skills/installed':
-      if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) return { success: true, skills: [] };
-      const skillsDir = path.join(config.installPath as string, '.claude', 'skills');
-      if (!fs.existsSync(skillsDir)) return { success: true, skills: [] };
-      try {
-        const installed = fs.readdirSync(skillsDir).filter((f: string) =>
-          fs.statSync(path.join(skillsDir, f)).isDirectory()
-        );
-        return { success: true, skills: installed };
-      } catch {
-        return { success: true, skills: [] };
-      }
-
-    case 'skills/install':
-      return handleSkillInstall(data, config);
-
-    case 'skills/uninstall':
-      return handleSkillUninstall(data, config);
+      return { success: true, skills: [], marketUrl: CLAWHUB_MARKET_URL };
 
     default:
       return { success: false, error: `未知操作: ${action}` };
@@ -2230,8 +2938,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
   logs = [];
 
   const addLog = (msg: string, level: 'info' | 'success' | 'error' | 'warning' = 'info') => {
-    logs.push({ time: new Date().toLocaleTimeString(), level, message: msg });
-    if (logs.length > 100) logs.shift();
+    appendLog(level, msg);
     console.log(`[部署] ${msg}`);
   };
 
@@ -2469,6 +3176,7 @@ async function handleConfigAsync(data: Record<string, unknown>, config: Record<s
   if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
   if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
   if (data.licenseServerUrl !== undefined) config.licenseServerUrl = data.licenseServerUrl;
+  if (data.purchaseUrl !== undefined) config.purchaseUrl = data.purchaseUrl;
 
   saveConfig(config);
   return { success: true, config };
@@ -2696,28 +3404,50 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     }
 
     const startCommand = getOpenClawStartCommand(config.installPath as string, gatewayPort);
-    logs.push({
-      time: new Date().toLocaleTimeString(),
-      level: 'info',
-      message: `启动命令: ${startCommand}`,
-    });
+    appendLog('info', `启动命令: ${startCommand}`);
 
-    const processRef = spawn(startCommand, [], {
+    const parsedCommand = parseCommandForSpawn(startCommand);
+    if (!parsedCommand.file) {
+      gatewayStatus = 'stopped';
+      return { success: false, error: '无法解析 OpenClaw 启动命令' };
+    }
+
+    const processRef = spawn(parsedCommand.file, parsedCommand.args, {
       cwd: config.installPath as string,
       env,
-      shell: true,
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     gatewayProcess = processRef;
+    let startupSettled = false;
+    let lastStderr = '';
+
+    const startupResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const settle = (result: { ok: boolean; error?: string }) => {
+        if (startupSettled) return;
+        startupSettled = true;
+        resolve(result);
+      };
+
+      processRef.once('error', (err: Error) => {
+        settle({ ok: false, error: `进程启动失败: ${err.message}` });
+      });
+
+      processRef.once('exit', (code: number | null) => {
+        const details = lastStderr || (code !== null ? `进程已退出 (code: ${code})` : '进程启动后立即退出');
+        settle({ ok: false, error: details });
+      });
+
+      setTimeout(() => settle({ ok: true }), 1200);
+    });
 
     processRef.stdout?.on('data', (d: Buffer) => {
-      logs.push({ time: new Date().toLocaleTimeString(), level: 'info', message: d.toString().trim() });
-      if (logs.length > 100) logs.shift();
+      appendLog('info', d.toString().trim());
     });
 
     processRef.stderr?.on('data', (d: Buffer) => {
-      logs.push({ time: new Date().toLocaleTimeString(), level: 'error', message: d.toString().trim() });
-      if (logs.length > 100) logs.shift();
+      lastStderr = d.toString().trim() || lastStderr;
+      appendLog('error', d.toString().trim());
     });
 
     processRef.on('spawn', () => {
@@ -2726,7 +3456,10 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
 
     processRef.on('error', (err: Error) => {
       gatewayStatus = 'stopped';
-      logs.push({ time: new Date().toLocaleTimeString(), level: 'error', message: `进程错误: ${err.message}` });
+      if (gatewayProcess === processRef) {
+        gatewayProcess = null;
+      }
+      appendLog('error', `进程错误: ${err.message}`);
       console.error('[进程错误]', err);
     });
 
@@ -2736,9 +3469,20 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
       }
       gatewayStatus = 'stopped';
       if (code !== 0 && code !== null) {
-        logs.push({ time: new Date().toLocaleTimeString(), level: 'warning', message: `进程已退出 (code: ${code})` });
+        appendLog('warning', `进程已退出 (code: ${code})`);
+      }
+      if (signal) {
+        appendLog('info', `进程已结束 (signal: ${signal})`);
       }
     });
+
+    if (!startupResult.ok) {
+      if (gatewayProcess === processRef) {
+        gatewayProcess = null;
+      }
+      gatewayStatus = 'stopped';
+      return { success: false, error: startupResult.error || 'OpenClaw 启动失败' };
+    }
 
     return { success: true, status: getGatewayRuntimeStatus(config) };
   } catch (e) {
@@ -2757,13 +3501,19 @@ function handleStop(): Record<string, unknown> {
   if (gatewayProcess) {
     try {
       gatewayStatus = 'stopping';
-      gatewayProcess.kill();
+      const processRef = gatewayProcess;
+      const killed = processRef.kill();
+      if (!killed) {
+        gatewayStatus = 'running';
+        return { success: false, error: '停止信号发送失败，请稍后重试' };
+      }
       gatewayProcess = null;
       gatewayStatus = 'stopped';
-      logs.push({ time: new Date().toLocaleTimeString(), level: 'info', message: '服务已停止' });
+      appendLog('info', '服务已停止');
     } catch (e) {
       gatewayStatus = 'running';
       console.error('[停止错误]', e);
+      return { success: false, error: `停止失败: ${(e as Error).message}` };
     }
   }
   return { success: true };
@@ -2785,8 +3535,10 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
       return { success: false, error: fetchResult.stderr || '无法获取远程版本信息' };
     }
 
+    const remoteRef = resolveRemoteDefaultRef(config.installPath as string);
+
     const localResult = runCommand('git rev-parse HEAD', config.installPath as string);
-    const remoteResult = runCommand('git rev-parse origin/main', config.installPath as string);
+    const remoteResult = runCommand(`git rev-parse ${remoteRef}`, config.installPath as string);
 
     if (!localResult.success || !remoteResult.success) {
       return { success: false, error: '无法获取版本信息' };
@@ -2797,7 +3549,7 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
     }
 
     // 更新
-    const resetResult = runCommand('git reset --hard origin/main', config.installPath as string);
+    const resetResult = runCommand(`git reset --hard ${remoteRef}`, config.installPath as string);
     if (!resetResult.success) {
       return { success: false, error: resetResult.stderr || '更新失败' };
     }
@@ -2809,8 +3561,15 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
 
     const installPlan = getInstallCommand(config.installPath as string);
     const buildPlan = getBuildCommand(config.installPath as string);
-    runCommand(installPlan.command, config.installPath as string, { timeout: 300000 });
-    runCommand(buildPlan.command, config.installPath as string, { ignoreError: true, timeout: 300000 });
+    const installResult = runCommand(installPlan.command, config.installPath as string, { timeout: 300000 });
+    if (!installResult.success) {
+      return { success: false, error: installResult.stderr || '依赖安装失败' };
+    }
+
+    const buildResult = runCommand(buildPlan.command, config.installPath as string, { timeout: 300000, ignoreError: true });
+    if (!buildResult.success) {
+      return { success: false, error: buildResult.stderr || '构建失败' };
+    }
 
     return { success: true, message: 'OpenClaw 更新成功！' };
   } catch (e) {
@@ -2820,11 +3579,55 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
   }
 }
 
+function handleUninstallOpenClaw(config: Record<string, unknown>): Record<string, unknown> {
+  const installPath = String(config.installPath || '').trim();
+  const removedPaths: string[] = [];
+
+  if (!installPath && !fs.existsSync(path.join(os.homedir(), '.openclaw'))) {
+    clearOpenClawDeploymentConfig(config);
+    saveConfig(config);
+    return {
+      success: true,
+      message: '当前没有检测到可卸载的 OpenClaw 部署。部署配置已清空。',
+      removedPaths: [],
+      config,
+      status: getGatewayRuntimeStatus(config),
+    };
+  }
+
+  try {
+    handleStop();
+
+    if (installPath) {
+      removePathIfExists(installPath, removedPaths);
+    }
+
+    removePathIfExists(path.join(os.homedir(), '.openclaw'), removedPaths);
+    removePathIfExists(path.join(os.tmpdir(), 'openclaw'), removedPaths);
+
+    clearOpenClawDeploymentConfig(config);
+    saveConfig(config);
+    logs = [];
+
+    return {
+      success: true,
+      message: 'OpenClaw 已彻底卸载。安装目录、运行缓存、临时日志和部署配置都已清理。',
+      removedPaths,
+      config,
+      status: getGatewayRuntimeStatus(config),
+    };
+  } catch (e) {
+    const error = e as Error;
+    logError(error, 'uninstall-openclaw');
+    return { success: false, error: `卸载失败: ${error.message}` };
+  }
+}
+
 // ============================================
 // 技能安装处理
 // ============================================
 
-function handleSkillInstall(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+async function handleSkillInstall(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const skillId = String(data.skill || '').trim();
   if (!skillId) {
     return { success: false, error: '请指定技能名称' };
@@ -2851,8 +3654,16 @@ function handleSkillInstall(data: Record<string, unknown>, config: Record<string
     );
 
     if (result.success) {
+      const installedSkills = await getInstalledOpenClawSkillsFromStatus(config);
+      const installed = installedSkills.find((skill) => skill.id === skillId);
+      if (!installed) {
+        return {
+          success: false,
+          error: `安装命令已执行，但 OpenClaw 当前技能列表中还没有识别到 "${skillId}"。请检查该 skill id 是否正确，并在 OpenClaw 里执行一次技能刷新。`,
+        };
+      }
       console.log(`[技能] 安装成功: ${skillId}`);
-      return { success: true, message: `技能 "${skillId}" 安装成功！` };
+      return { success: true, message: `技能 "${skillId}" 安装成功，来源：${installed.source}` };
     } else {
       return { success: false, error: result.stderr || '安装失败' };
     }
@@ -2863,7 +3674,7 @@ function handleSkillInstall(data: Record<string, unknown>, config: Record<string
   }
 }
 
-function handleSkillUninstall(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+async function handleSkillUninstall(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const skillId = String(data.skill || '').trim();
   if (!skillId) {
     return { success: false, error: '请指定技能名称' };
@@ -2879,14 +3690,22 @@ function handleSkillUninstall(data: Record<string, unknown>, config: Record<stri
   }
 
   try {
-    const skillPath = path.join(config.installPath as string, '.claude', 'skills', skillId);
-    if (!fs.existsSync(skillPath)) {
+    const installedSkill = (await getInstalledOpenClawSkillsFromStatus(config)).find((skill) => skill.id === skillId);
+    if (!installedSkill) {
       return { success: false, error: '技能未安装' };
     }
+    if (!installedSkill.removable) {
+      return { success: false, error: `技能 "${skillId}" 来自 ${installedSkill.source}，当前不支持在龙虾助手里直接卸载` };
+    }
 
-    fs.rmSync(skillPath, { recursive: true, force: true });
+    const resolved = resolveRemovableSkillPath(config, skillId);
+    if (!resolved) {
+      return { success: false, error: `已识别到技能 "${skillId}"，但未找到可删除的技能目录` };
+    }
+
+    fs.rmSync(resolved.path, { recursive: true, force: true });
     console.log(`[技能] 已卸载: ${skillId}`);
-    return { success: true, message: `技能 "${skillId}" 已卸载` };
+    return { success: true, message: `技能 "${skillId}" 已从 ${resolved.source} 卸载` };
   } catch (e) {
     const error = e as Error;
     return { success: false, error: `卸载失败: ${error.message}` };
@@ -2994,14 +3813,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
   console.log('  检查更新中...');
 
   try {
-    // 1. 网络连接检查
-    const hasNetwork = await hasNetworkConnection();
-    if (!hasNetwork) {
-      console.log('  无网络连接，跳过更新检查');
-      return { checked: false, updated: false, error: '无网络连接' };
-    }
-
-    // 2. 从 GitHub API 获取最新 release 信息（尝试多个镜像源）
+    // 1. 从 release API 镜像源获取最新版本；不要先用 GitHub 直连结果把镜像链路短路掉
     let releaseInfo: { tag_name: string; assets?: Array<{ name: string; browser_download_url: string }> } | null = null;
     let usedMirror = '';
 
@@ -3044,7 +3856,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
 
     console.log(`  发现新版本 v${latestVersion}，正在更新...`);
 
-    // 3. 确定当前平台的二进制文件名
+    // 2. 确定当前平台的二进制文件名
     const platform = os.platform();
     const arch = os.arch();
     let assetName: string;
@@ -3058,14 +3870,14 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
       assetName = 'lobster-linux-x64';
     }
 
-    // 4. 查找对应的 asset
+    // 3. 查找对应的 asset
     const asset = releaseInfo.assets?.find((a) => a.name === assetName);
     if (!asset) {
       console.log(`  未找到 ${assetName}，跳过更新`);
       return { checked: true, updated: false, error: `未找到 ${assetName} 发布包` };
     }
 
-    // 5. 下载新版本（尝试多个镜像源）
+    // 4. 下载新版本（尝试多个镜像源）
     const currentExe = process.execPath;
     const newExe = currentExe + '.new';
     let downloadSuccess = false;
@@ -3102,7 +3914,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
       return { checked: true, updated: false, error: '下载失败' };
     }
 
-    // 6. 验证下载文件
+    // 5. 验证下载文件
     const stats = fs.statSync(newExe);
     if (stats.size < 1000) {
       console.log('  下载的文件太小，可能已损坏');
@@ -3112,12 +3924,12 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
       return { checked: true, updated: false, error: '下载的文件可能已损坏' };
     }
 
-    // 7. 设置可执行权限
+    // 6. 设置可执行权限
     if (platform !== 'win32') {
       fs.chmodSync(newExe, 0o755);
     }
 
-    // 8. 原子性替换（备份旧文件）
+    // 7. 原子性替换（备份旧文件）
     const backupExe = currentExe + '.old';
 
     // 清理旧备份
@@ -3147,7 +3959,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
 
     console.log('  更新完成！正在重启...');
 
-    // 9. 重启
+    // 8. 重启
     spawn(currentExe, process.argv.slice(1), {
       detached: true,
       stdio: 'inherit',

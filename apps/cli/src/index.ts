@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.22';
+const VERSION = '1.0.23';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -2414,13 +2414,13 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       \`;
 
       // 初始化 Tab 数据
-      if (state.currentTab === 'skills' || !state.skillsLoaded) {
+      if (state.currentTab === 'skills' && !state.skillsLoaded) {
         loadSkills();
       }
-      if (state.currentTab === 'channels' || !state.channelsLoaded) {
+      if (state.currentTab === 'channels' && !state.channelsLoaded) {
         loadChannels();
       }
-      if (state.currentTab === 'help' || !state.helpLoaded) {
+      if (state.currentTab === 'help' && !state.helpLoaded) {
         loadHelp();
       }
 
@@ -3462,7 +3462,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const res = await api('status');
       if (res.status) {
         state.status = res.status;
-        if (state.currentView === 'dashboard') {
+        if (state.currentView === 'dashboard' && (state.currentTab === 'status' || !state.currentTab)) {
           render();
         }
       }
@@ -4201,7 +4201,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
 
     // 环境变量
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...getCommandLookupEnv(),
       PORT: String(gatewayPort),
       OPENCLAW_CONFIG_PATH: managedConfigPath,
       [provider.envKey]: String(config.apiKey || ''),

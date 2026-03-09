@@ -1,57 +1,44 @@
-import { ActivateRequest, ActivateResponse } from './types';
-import { findCode, updateCode } from './oss';
+import { ActivateRequest, ActivateResponse, PRODUCT_ID } from './types';
+import { activateCode } from './oss';
 
 /**
  * 激活产品
  */
 export async function activate(request: ActivateRequest): Promise<ActivateResponse> {
   const { code, deviceFingerprint, deviceName, productId } = request;
+  if (productId !== PRODUCT_ID) {
+    return {
+      success: false,
+      message: '产品标识无效',
+    };
+  }
 
-  // 查找激活码
-  const licenseCode = await findCode(code);
+  const activation = await activateCode(code, deviceFingerprint, deviceName);
 
-  if (!licenseCode) {
+  if (activation.status === 'not_found') {
     return {
       success: false,
       message: '激活码不存在',
     };
   }
 
-  // 检查是否已使用
-  if (licenseCode.status === 'used') {
-    // 检查是否是同一设备
-    if (licenseCode.deviceFingerprint === deviceFingerprint) {
+  if (activation.status === 'already_used_same_device') {
       return {
         success: true,
         message: '该设备已激活',
         license: {
           productId,
           activationCode: code,
-          activatedAt: licenseCode.activatedAt!,
+          activatedAt: activation.licenseCode.activatedAt!,
           expiresAt: null,
         },
       };
-    }
+  }
 
+  if (activation.status === 'already_used_other_device') {
     return {
       success: false,
       message: '激活码已被其他设备使用',
-    };
-  }
-
-  // 激活码有效，绑定设备
-  const now = new Date().toISOString();
-  const updated = await updateCode(code, {
-    status: 'used',
-    deviceFingerprint,
-    deviceName,
-    activatedAt: now,
-  });
-
-  if (!updated) {
-    return {
-      success: false,
-      message: '激活失败，请稍后重试',
     };
   }
 
@@ -61,7 +48,7 @@ export async function activate(request: ActivateRequest): Promise<ActivateRespon
     license: {
       productId,
       activationCode: code,
-      activatedAt: now,
+      activatedAt: activation.licenseCode.activatedAt!,
       expiresAt: null,
     },
   };

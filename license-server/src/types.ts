@@ -1,3 +1,5 @@
+export const PRODUCT_ID = 'lobster-assistant-desktop';
+
 /**
  * 激活码数据结构
  */

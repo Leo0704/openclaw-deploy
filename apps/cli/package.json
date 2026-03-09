@@ -1,6 +1,6 @@
 {
   "name": "lobster-assistant",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "龙虾助手 - OpenClaw 一键部署工具",
   "type": "commonjs",
   "main": "dist/index.js",
@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "clean": "rm -rf dist bin",
-    "pkg": "pkg . --targets node18-macos-arm64,node18-macos-x64,node18-linux-x64,node18-win-x64 --output-path bin"
+    "pkg": "pkg . --targets node20-macos-arm64,node20-macos-x64,node20-linux-x64,node20-win-x64 --output-path bin"
   },
   "pkg": {
     "scripts": "dist/**/*.js",
@@ -24,5 +24,8 @@
     "@types/node": "^22.10.0",
     "@yao-pkg/pkg": "^5.16.1",
     "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

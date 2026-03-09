@@ -41,9 +41,10 @@ const {
   checkNodeVersion,
   checkDependencies,
   performHealthChecks,
+  OPENCLAW_MIN_NODE_VERSION,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.19';
+const VERSION = '1.0.20';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -575,7 +576,36 @@ type OpenClawSkillStatusReport = {
     name?: string;
     source?: string;
     bundled?: boolean;
+    install?: Array<{
+      id?: string;
+      kind?: string;
+      label?: string;
+    }>;
   }>;
+};
+
+type GatewayChannelsStatusReport = {
+  channels?: Record<string, Record<string, unknown>>;
+  channelAccounts?: Record<string, Array<Record<string, unknown>>>;
+  channelDefaultAccountId?: Record<string, string>;
+};
+
+type NotificationChannelStatus = {
+  id: 'telegram' | 'feishu';
+  title: string;
+  configured: boolean;
+  enabled: boolean;
+  pluginReady: boolean;
+  diagnostics: string[];
+  runtime: {
+    reachable: boolean;
+    configured?: boolean;
+    running?: boolean;
+    connected?: boolean;
+    lastError?: string;
+    accountId?: string;
+  };
+  config: Record<string, unknown>;
 };
 
 function getOpenClawConfigPath(): string {
@@ -584,6 +614,86 @@ function getOpenClawConfigPath(): string {
 
 function readOpenClawRuntimeConfig(): Record<string, unknown> {
   return readJsonFile(getOpenClawConfigPath()) || {};
+}
+
+function getManagedOpenClawConfigPath(config: Record<string, unknown>): string {
+  const installPath = String(config.installPath || '').trim();
+  if (installPath && isOpenClawProjectDir(installPath)) {
+    return path.join(installPath, '.claude', 'openclaw.json');
+  }
+  return getOpenClawConfigPath();
+}
+
+function readManagedOpenClawConfig(config: Record<string, unknown>): {
+  path: string;
+  exists: boolean;
+  config: Record<string, unknown>;
+} {
+  const configPath = getManagedOpenClawConfigPath(config);
+  const parsed = readJsonFile(configPath);
+  return {
+    path: configPath,
+    exists: !!parsed,
+    config: parsed || {},
+  };
+}
+
+function writeManagedOpenClawConfig(config: Record<string, unknown>, nextConfig: Record<string, unknown>) {
+  const configPath = getManagedOpenClawConfigPath(config);
+  const configDir = path.dirname(configPath);
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+  fs.writeFileSync(configPath, JSON.stringify(nextConfig, null, 2));
+  return configPath;
+}
+
+function mergeOpenClawConfigSections(
+  baseConfig: Record<string, unknown>,
+  patchConfig: Record<string, unknown>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {
+    ...baseConfig,
+    ...patchConfig,
+  };
+
+  const baseModels = (baseConfig.models as Record<string, unknown> | undefined) || {};
+  const patchModels = (patchConfig.models as Record<string, unknown> | undefined) || {};
+  if (baseConfig.models || patchConfig.models) {
+    merged.models = {
+      ...baseModels,
+      ...patchModels,
+      providers: {
+        ...(((baseModels.providers as Record<string, unknown> | undefined) || {})),
+        ...(((patchModels.providers as Record<string, unknown> | undefined) || {})),
+      },
+    };
+  }
+
+  const baseAgents = (baseConfig.agents as Record<string, unknown> | undefined) || {};
+  const patchAgents = (patchConfig.agents as Record<string, unknown> | undefined) || {};
+  const baseDefaults = (baseAgents.defaults as Record<string, unknown> | undefined) || {};
+  const patchDefaults = (patchAgents.defaults as Record<string, unknown> | undefined) || {};
+  if (baseConfig.agents || patchConfig.agents) {
+    merged.agents = {
+      ...baseAgents,
+      ...patchAgents,
+      defaults: {
+        ...baseDefaults,
+        ...patchDefaults,
+        model: {
+          ...(((baseDefaults.model as Record<string, unknown> | undefined) || {})),
+          ...(((patchDefaults.model as Record<string, unknown> | undefined) || {})),
+        },
+        models: {
+          ...(((baseDefaults.models as Record<string, unknown> | undefined) || {})),
+          ...(((patchDefaults.models as Record<string, unknown> | undefined) || {})),
+        },
+      },
+    };
+  }
+
+  return merged;
 }
 
 function resolveOpenClawWorkspaceDir(): string {
@@ -632,11 +742,238 @@ function mapSkillStatusReport(report: OpenClawSkillStatusReport | null | undefin
   return Array.from(merged.values()).sort((a, b) => a.id.localeCompare(b.id));
 }
 
+function getStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+}
+
+function parseAllowFromInput(raw: unknown): string[] {
+  return String(raw || '')
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function maskSecret(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= 8) return `${text.slice(0, 2)}***`;
+  return `${text.slice(0, 4)}***${text.slice(-3)}`;
+}
+
+function buildChannelRuntimeSummary(
+  report: GatewayChannelsStatusReport | null,
+  channelId: 'telegram' | 'feishu'
+): NotificationChannelStatus['runtime'] {
+  if (!report) {
+    return { reachable: false };
+  }
+  const accountsMap = report.channelAccounts || {};
+  const accounts = Array.isArray(accountsMap[channelId]) ? accountsMap[channelId] : [];
+  const defaultAccountId =
+    String(report.channelDefaultAccountId?.[channelId] || '').trim() ||
+    String(accounts[0]?.accountId || '').trim();
+  const account =
+    accounts.find((entry) => String(entry?.accountId || '').trim() === defaultAccountId) ||
+    accounts[0] ||
+    null;
+
+  if (!account) {
+    return { reachable: true };
+  }
+
+  return {
+    reachable: true,
+    accountId: String(account.accountId || ''),
+    configured: account.configured === true,
+    running: account.running === true,
+    connected: account.connected === true,
+    lastError: typeof account.lastError === 'string' ? account.lastError : undefined,
+  };
+}
+
+function isPluginConfigured(rawConfig: Record<string, unknown>, pluginId: string): boolean {
+  const plugins = rawConfig.plugins as Record<string, unknown> | undefined;
+  const allow = Array.isArray(plugins?.allow) ? plugins?.allow.map((entry) => String(entry || '').trim()) : [];
+  if (allow.includes(pluginId)) return true;
+
+  const entries = plugins?.entries as Record<string, unknown> | undefined;
+  const entry = entries?.[pluginId] as Record<string, unknown> | undefined;
+  if (entry && entry.enabled !== false) return true;
+
+  const installs = plugins?.installs as Record<string, unknown> | undefined;
+  if (installs?.[pluginId]) return true;
+
+  const load = plugins?.load as Record<string, unknown> | undefined;
+  const paths = Array.isArray(load?.paths) ? load.paths.map((entry) => String(entry || '').trim()) : [];
+  return paths.some((entry) => entry.toLowerCase().includes(pluginId.toLowerCase()));
+}
+
+function buildTelegramChannelStatus(
+  rawConfig: Record<string, unknown>,
+  runtimeReport: GatewayChannelsStatusReport | null
+): NotificationChannelStatus {
+  const telegram = (rawConfig.channels as Record<string, unknown> | undefined)?.telegram as Record<string, unknown> | undefined;
+  const diagnostics: string[] = [];
+  const botToken = String(telegram?.botToken || '').trim();
+  const allowFrom = getStringList(telegram?.allowFrom);
+  const dmPolicy = String(telegram?.dmPolicy || 'pairing');
+  const groupPolicy = String(telegram?.groupPolicy || 'allowlist');
+  const requireMention = (((telegram?.groups as Record<string, unknown> | undefined)?.['*'] as Record<string, unknown> | undefined)?.requireMention) !== false;
+  const enabled = telegram?.enabled !== false && Boolean(telegram);
+
+  if (enabled && !botToken) diagnostics.push('缺少 Bot Token。');
+  if (dmPolicy === 'allowlist' && allowFrom.length === 0) diagnostics.push('私聊策略设为“仅允许名单”，但还没有填写 allowFrom。');
+  if (dmPolicy === 'open' && !allowFrom.includes('*')) diagnostics.push('私聊策略设为“全部放行”时，allowFrom 需要包含 *。');
+  if (groupPolicy === 'allowlist' && allowFrom.length === 0) diagnostics.push('群聊策略设为“仅允许名单”时，建议同步配置 allowFrom。');
+
+  return {
+    id: 'telegram',
+    title: 'Telegram',
+    configured: Boolean(botToken),
+    enabled,
+    pluginReady: true,
+    diagnostics,
+    runtime: buildChannelRuntimeSummary(runtimeReport, 'telegram'),
+    config: {
+      enabled,
+      botTokenMasked: maskSecret(botToken),
+      botToken,
+      dmPolicy,
+      groupPolicy,
+      allowFrom,
+      requireMention,
+    },
+  };
+}
+
+function buildFeishuChannelStatus(
+  rawConfig: Record<string, unknown>,
+  runtimeReport: GatewayChannelsStatusReport | null
+): NotificationChannelStatus {
+  const feishu = (rawConfig.channels as Record<string, unknown> | undefined)?.feishu as Record<string, unknown> | undefined;
+  const diagnostics: string[] = [];
+  const appId = String(feishu?.appId || '').trim();
+  const appSecret = String(feishu?.appSecret || '').trim();
+  const connectionMode = String(feishu?.connectionMode || 'websocket');
+  const verificationToken = String(feishu?.verificationToken || '').trim();
+  const dmPolicy = String(feishu?.dmPolicy || 'pairing');
+  const groupPolicy = String(feishu?.groupPolicy || 'allowlist');
+  const requireMention = feishu?.requireMention !== false;
+  const allowFrom = getStringList(feishu?.allowFrom);
+  const enabled = feishu?.enabled !== false && Boolean(feishu);
+  const pluginReady = isPluginConfigured(rawConfig, 'feishu');
+
+  if (!pluginReady) diagnostics.push('当前配置里还没有明显的飞书插件启用信息，保存配置后仍需确认 OpenClaw 已加载 feishu 插件。');
+  if (enabled && !appId) diagnostics.push('缺少 App ID。');
+  if (enabled && !appSecret) diagnostics.push('缺少 App Secret。');
+  if (connectionMode === 'webhook' && !verificationToken) diagnostics.push('Webhook 模式需要填写 Verification Token。');
+  if (dmPolicy === 'allowlist' && allowFrom.length === 0) diagnostics.push('私聊策略设为“仅允许名单”时，建议填写 allowFrom。');
+
+  return {
+    id: 'feishu',
+    title: '飞书',
+    configured: Boolean(appId && appSecret),
+    enabled,
+    pluginReady,
+    diagnostics,
+    runtime: buildChannelRuntimeSummary(runtimeReport, 'feishu'),
+    config: {
+      enabled,
+      appId,
+      appSecretMasked: maskSecret(appSecret),
+      appSecret,
+      connectionMode,
+      verificationToken,
+      verificationTokenMasked: maskSecret(verificationToken),
+      dmPolicy,
+      groupPolicy,
+      requireMention,
+      allowFrom,
+    },
+  };
+}
+
+function getOpenClawGatewayChannelsReport(
+  config: Record<string, unknown>,
+  options: { probe?: boolean; timeoutMs?: number } = {}
+): GatewayChannelsStatusReport | null {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+    return null;
+  }
+
+  const projectPath = config.installPath as string;
+  const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+  const gatewayToken = readGatewayTokenFromHome();
+  if (!gatewayToken) {
+    return null;
+  }
+
+  const gatewayCall = buildGatewayCallCommand(projectPath, gatewayPort, gatewayToken, 'channels.status', {
+    probe: options.probe === true,
+    timeoutMs: options.timeoutMs || 3000,
+  });
+  const result = runCommandArgs(gatewayCall.file, projectPath, {
+    args: gatewayCall.args,
+    env: getManagedOpenClawEnv(config),
+    timeout: 20000,
+    ignoreError: true,
+    silent: true,
+  });
+  if (!result.success) {
+    return null;
+  }
+
+  const parsed = tryParseJsonObject(result.stdout);
+  if (!parsed) {
+    return null;
+  }
+
+  return parsed as GatewayChannelsStatusReport;
+}
+
+function getNotificationChannelsStatus(config: Record<string, unknown>, options: { probe?: boolean } = {}) {
+  const snapshot = readManagedOpenClawConfig(config);
+  const runtimeReport = getOpenClawGatewayChannelsReport(config, {
+    probe: options.probe === true,
+    timeoutMs: options.probe === true ? 8000 : 3000,
+  });
+  const telegram = buildTelegramChannelStatus(snapshot.config, runtimeReport);
+  const feishu = buildFeishuChannelStatus(snapshot.config, runtimeReport);
+
+  return {
+    success: true,
+    configPath: snapshot.path,
+    configExists: snapshot.exists,
+    gatewayReachable: !!runtimeReport,
+    channels: {
+      telegram,
+      feishu,
+    },
+  };
+}
+
 function getOpenClawCliCommand(projectPath: string, args: string[]): { file: string; args: string[] } {
   const pm = detectProjectPackageManager(projectPath);
   return pm === 'pnpm'
     ? { file: 'pnpm', args: ['openclaw', ...args] }
     : { file: 'npm', args: ['run', 'openclaw', '--', ...args] };
+}
+
+function buildGatewayCallCommand(projectPath: string, gatewayPort: number, gatewayToken: string, method: string, params: Record<string, unknown>) {
+  return getOpenClawCliCommand(projectPath, [
+    'gateway',
+    'call',
+    method,
+    '--json',
+    '--url',
+    `ws://127.0.0.1:${gatewayPort}`,
+    '--token',
+    gatewayToken,
+    '--params',
+    JSON.stringify(params),
+  ]);
 }
 
 function tryParseJsonObject(raw: string | undefined): Record<string, unknown> | null {
@@ -720,20 +1057,10 @@ async function getInstalledOpenClawSkillsFromStatus(config: Record<string, unkno
   const gatewayToken = readGatewayTokenFromHome();
 
   if (gatewayToken) {
-    const gatewayCall = getOpenClawCliCommand(projectPath, [
-      'gateway',
-      'call',
-      'skills.status',
-      '--json',
-      '--url',
-      `ws://127.0.0.1:${gatewayPort}`,
-      '--token',
-      gatewayToken,
-      '--params',
-      '{}',
-    ]);
+    const gatewayCall = buildGatewayCallCommand(projectPath, gatewayPort, gatewayToken, 'skills.status', {});
     const gatewayResult = runCommandArgs(gatewayCall.file, projectPath, {
       args: gatewayCall.args,
+      env: getManagedOpenClawEnv(config),
       timeout: 30000,
       ignoreError: true,
       silent: true,
@@ -750,6 +1077,7 @@ async function getInstalledOpenClawSkillsFromStatus(config: Record<string, unkno
   const listCommand = getOpenClawCliCommand(projectPath, ['skills', 'list', '--json']);
   const listResult = runCommandArgs(listCommand.file, projectPath, {
     args: listCommand.args,
+    env: getManagedOpenClawEnv(config),
     timeout: 30000,
     ignoreError: true,
     silent: true,
@@ -763,6 +1091,59 @@ async function getInstalledOpenClawSkillsFromStatus(config: Record<string, unkno
   }
 
   return getInstalledOpenClawSkills(config);
+}
+
+function getOpenClawGatewaySkillReport(config: Record<string, unknown>): OpenClawSkillStatusReport | null {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+    return null;
+  }
+  const projectPath = config.installPath as string;
+  const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+  const gatewayToken = readGatewayTokenFromHome();
+  if (!gatewayToken) {
+    return null;
+  }
+
+  const gatewayCall = buildGatewayCallCommand(projectPath, gatewayPort, gatewayToken, 'skills.status', {});
+  const gatewayResult = runCommandArgs(gatewayCall.file, projectPath, {
+    args: gatewayCall.args,
+    env: getManagedOpenClawEnv(config),
+    timeout: 30000,
+    ignoreError: true,
+    silent: true,
+  });
+  if (!gatewayResult.success) {
+    return null;
+  }
+
+  const parsed = tryParseJsonObject(gatewayResult.stdout);
+  if (!parsed || !Array.isArray((parsed as OpenClawSkillStatusReport).skills)) {
+    return null;
+  }
+  return parsed as OpenClawSkillStatusReport;
+}
+
+async function getGatewayHealthStatus(config: Record<string, unknown>): Promise<boolean> {
+  const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+  const result = await fetchWithTimeout(`http://127.0.0.1:${gatewayPort}/health`, { method: 'GET' }, 2000);
+  return !!result.success;
+}
+
+async function getGatewayRuntimeStatusAsync(config: Record<string, unknown>) {
+  const base = getGatewayRuntimeStatus(config);
+  const healthy = await getGatewayHealthStatus(config);
+  if (healthy) {
+    return {
+      ...base,
+      running: true,
+      state: gatewayStatus === 'starting' ? 'starting' : 'running',
+    };
+  }
+  return {
+    ...base,
+    running: gatewayStatus === 'starting',
+    state: gatewayStatus === 'starting' ? 'starting' : 'stopped',
+  };
 }
 
 function resolveRemovableSkillPath(config: Record<string, unknown>, skillId: string): { path: string; source: string } | null {
@@ -1036,6 +1417,7 @@ interface RunCommandResult {
 
 interface RunCommandArgsOptions extends RunCommandOptions {
   args?: string[];
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -1103,11 +1485,12 @@ function runCommandArgs(
   cwd: string,
   options: RunCommandArgsOptions = {}
 ): RunCommandResult {
-  const { timeout = 300000, ignoreError = false, silent = false, args = [] } = options;
+  const { timeout = 300000, ignoreError = false, silent = false, args = [], env } = options;
 
   try {
     const result = execFileSync(file, args, {
       cwd,
+      env: env || process.env,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
@@ -1171,6 +1554,13 @@ function parseCommandForSpawn(command: string): { file: string; args: string[] }
   return {
     file: normalized[0] || '',
     args: normalized.slice(1),
+  };
+}
+
+function getManagedOpenClawEnv(config: Record<string, unknown>): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    OPENCLAW_CONFIG_PATH: getManagedOpenClawConfigPath(config),
   };
 }
 
@@ -1669,7 +2059,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       currentTab: 'status',
       currentView: 'dashboard',
       skillsLoaded: false,
+      channelsLoaded: false,
       helpLoaded: false,
+      channelsData: null,
       customWizard: {
         verified: false,
         verifying: false,
@@ -1870,6 +2262,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       card.innerHTML = \`
         <div class="tabs">
           <button class="tab \${state.currentTab === 'status' || !state.currentTab ? 'active' : ''}" onclick="switchTab('status')">🎛️ 服务</button>
+          <button class="tab \${state.currentTab === 'channels' ? 'active' : ''}" onclick="switchTab('channels')">📢 通知</button>
           <button class="tab \${state.currentTab === 'skills' ? 'active' : ''}" onclick="switchTab('skills')">🧩 技能市场</button>
           <button class="tab \${state.currentTab === 'help' ? 'active' : ''}" onclick="switchTab('help')">❓ 使用指南</button>
         </div>
@@ -1966,10 +2359,17 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
           <div class="logs" id="logs"><div class="log-line log-info">等待操作...</div></div>
         </div>
 
+        <!-- 通知 Tab -->
+        <div id="tab-channels" class="tab-content \${state.currentTab === 'channels' ? 'active' : ''}">
+          <div id="channels-content">
+            <div style="text-align:center;padding:20px;color:#9CA3AF;">加载中...</div>
+          </div>
+        </div>
+
         <!-- 技能市场 Tab -->
         <div id="tab-skills" class="tab-content \${state.currentTab === 'skills' ? 'active' : ''}">
           <div class="note note-info" style="margin-bottom: 16px;">
-            🧩 OpenClaw 的技能市场是 ClawHub。先去市场里挑技能，记住 skill id，再回到这里安装。
+            🧩 这里显示的是 OpenClaw 当前识别到的技能来源，不只包括你后来安装的技能，也包括 OpenClaw 自带和只读来源里的技能。
           </div>
           <div class="panel" style="margin-bottom:16px">
             <div class="panel-title">官方技能市场</div>
@@ -1998,7 +2398,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
           <div class="divider"></div>
 
-          <h3 style="font-size:14px;color:#1F2937;margin-bottom:12px">✅ 已安装技能</h3>
+          <h3 style="font-size:14px;color:#1F2937;margin-bottom:12px">✅ OpenClaw 当前识别到的技能</h3>
           <div id="installed-skills">
             <div style="text-align:center;padding:20px;color:#9CA3AF;">加载中...</div>
           </div>
@@ -2013,6 +2413,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       // 初始化 Tab 数据
       if (state.currentTab === 'skills' || !state.skillsLoaded) {
         loadSkills();
+      }
+      if (state.currentTab === 'channels' || !state.channelsLoaded) {
+        loadChannels();
       }
       if (state.currentTab === 'help' || !state.helpLoaded) {
         loadHelp();
@@ -2063,6 +2466,257 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     function switchTab(tab) {
       state.currentTab = tab;
       render();
+    }
+
+    // ============================================
+    // 通知渠道
+    // ============================================
+
+    async function loadChannels() {
+      const res = await api('channels/status');
+      if (!res.success) {
+        toast(res.error || '无法读取通知配置', 'error');
+        return;
+      }
+      state.channelsData = res;
+      state.channelsLoaded = true;
+      renderChannels();
+    }
+
+    async function refreshChannels() {
+      state.channelsLoaded = false;
+      await loadChannels();
+    }
+
+    async function probeChannels() {
+      toast('正在向 OpenClaw 请求渠道探测...', 'info');
+      const res = await api('channels/probe', {}, 15000);
+      if (!res.success) {
+        toast(res.error || '渠道探测失败', 'error');
+        return;
+      }
+      state.channelsData = res;
+      state.channelsLoaded = true;
+      renderChannels();
+      toast('渠道状态已刷新');
+    }
+
+    function renderDiagnostics(items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        return '<div class="note note-info" style="margin-top:12px">当前没有发现明显的配置缺口。</div>';
+      }
+      return '<div class="note note-warning" style="margin-top:12px"><ul style="margin-left:18px">' +
+        items.map(item => '<li>' + item + '</li>').join('') +
+      '</ul></div>';
+    }
+
+    function renderRuntime(runtime) {
+      if (!runtime || !runtime.reachable) {
+        return '<div class="panel-copy">OpenClaw 当前未连上网关，这里先显示配置层状态。保存后重启服务，再回来确认渠道是否真正连上。</div>';
+      }
+      const bits = [];
+      if (runtime.accountId) bits.push('账号：<span class="mono">' + runtime.accountId + '</span>');
+      if (runtime.configured !== undefined) bits.push('配置：' + (runtime.configured ? '已识别' : '未识别'));
+      if (runtime.running !== undefined) bits.push('运行：' + (runtime.running ? '运行中' : '未运行'));
+      if (runtime.connected !== undefined) bits.push('连接：' + (runtime.connected ? '已连通' : '未连通'));
+      if (runtime.lastError) bits.push('最近错误：' + runtime.lastError);
+      return '<div class="panel-copy">' + bits.join('<br>') + '</div>';
+    }
+
+    function renderGuideSteps(title, steps) {
+      return [
+        '<div class="panel" style="margin-bottom:16px;background:rgba(255,255,255,0.78)">',
+        '  <div class="panel-title">' + title + '</div>',
+        '  <div style="display:grid;gap:10px;margin-top:14px">',
+             steps.map((step, index) => (
+               '<div style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px;align-items:flex-start">' +
+                 '<div style="width:32px;height:32px;border-radius:999px;background:#fff0e8;color:#d75621;display:flex;align-items:center;justify-content:center;font-weight:700">' + (index + 1) + '</div>' +
+                 '<div><div style="font-size:13px;font-weight:600;color:#1F2937">' + step.title + '</div><div style="font-size:13px;color:#5f6b7a;line-height:1.6;margin-top:4px">' + step.body + '</div></div>' +
+               '</div>'
+             )).join(''),
+        '  </div>',
+        '</div>',
+      ].join('');
+    }
+
+    function renderTelegramGuide() {
+      return renderGuideSteps('Telegram 接入顺序', [
+        {
+          title: '先在 Telegram 里创建 Bot',
+          body: '打开 <span class="mono">@BotFather</span>，执行 <span class="mono">/newbot</span>。它会返回一个 Bot Token，这个 Token 直接填到下面的第 1 个输入框。',
+        },
+        {
+          title: '确认谁可以给机器人发消息',
+          body: '把你自己的 Telegram 用户 ID 填进 allowFrom。若你只是自己用，先填你自己的 ID 即可；若要开放给多人，再逐个补进去。',
+        },
+        {
+          title: '决定陌生人和群聊怎么进来',
+          body: '私聊策略控制陌生用户能否直接给 Bot 发消息；群聊策略控制群消息是否直接放行。默认建议保持 <span class="mono">pairing + allowlist</span>，这样最稳。',
+        },
+        {
+          title: '群聊是否必须 @ 机器人',
+          body: '建议默认开启。这样 Bot 不会在群里把所有消息都当作指令，比较接近 OpenClaw 对“群里提及才响应”的常见用法。',
+        },
+      ]);
+    }
+
+    function renderFeishuGuide() {
+      return renderGuideSteps('飞书接入顺序', [
+        {
+          title: '先准备企业自建应用',
+          body: '到 <a href="https://open.feishu.cn/" target="_blank" rel="noopener">飞书开放平台</a> 创建企业自建应用。你需要拿到 <span class="mono">App ID</span> 和 <span class="mono">App Secret</span>。',
+        },
+        {
+          title: '先用 websocket，除非你已经有公网回调',
+          body: '如果你只是本机自用，优先选 <span class="mono">websocket</span>。只有你明确在做公网事件回调时，才改成 <span class="mono">webhook</span> 并填写 Verification Token。',
+        },
+        {
+          title: '决定私聊和群聊的放行策略',
+          body: '私聊策略控制个人消息；群聊策略控制群消息。默认建议保持 <span class="mono">pairing + allowlist</span>，保存后再看 OpenClaw 的状态是否识别到飞书渠道。',
+        },
+        {
+          title: '保存后确认插件是否真的加载',
+          body: '这页会尽量补齐 <span class="mono">plugins.allow</span> 和 <span class="mono">plugins.entries.feishu.enabled</span>，但如果你本机没有可用的飞书插件，仍然需要后续补插件安装。',
+        },
+      ]);
+    }
+
+    function renderChannels() {
+      const el = $('channels-content');
+      if (!el || !state.channelsData) return;
+      const data = state.channelsData;
+      const telegram = data.channels?.telegram;
+      const feishu = data.channels?.feishu;
+      el.innerHTML = [
+        '<div class="panel" style="margin-bottom:16px">',
+        '  <div class="panel-title">通知渠道配置</div>',
+        '  <div class="panel-copy">',
+        '    这里直接编辑 OpenClaw 实际使用的通知配置。当前配置文件：<span class="mono">' + (data.configPath || '未找到') + '</span><br>',
+             (data.gatewayReachable ? '网关在线，状态面板会优先显示 OpenClaw 当前识别到的渠道状态。' : '网关离线，当前先显示配置状态；保存后建议重启服务再确认。'),
+        '  </div>',
+        '  <div class="actions" style="margin-top:14px"><button class="btn btn-secondary" onclick="refreshChannels()">刷新状态</button><button class="btn btn-secondary" onclick="probeChannels()">主动探测</button></div>',
+        '</div>',
+        '<div class="panel" style="margin-bottom:16px">',
+        '  <div class="panel-title">Telegram</div>',
+        '  <div class="panel-copy">用于 Telegram 机器人私聊/群聊接入。这里按 OpenClaw 的配置语义写入 <span class="mono">channels.telegram</span>。</div>',
+           renderTelegramGuide(),
+        '  <div class="status-grid" style="margin-top:14px">',
+        '    <div class="status-item"><div class="status-label">配置状态</div><div class="status-value ' + (telegram?.configured ? 'success' : 'error') + '">' + (telegram?.configured ? '已配置' : '未配置') + '</div></div>',
+        '    <div class="status-item"><div class="status-label">启用状态</div><div class="status-value">' + (telegram?.enabled ? '已启用' : '未启用') + '</div></div>',
+        '    <div class="status-item"><div class="status-label">Bot Token</div><div class="status-value" style="font-size:12px">' + (telegram?.config?.botTokenMasked || '未填写') + '</div></div>',
+        '    <div class="status-item"><div class="status-label">私聊策略</div><div class="status-value">' + (telegram?.config?.dmPolicy || 'pairing') + '</div></div>',
+        '  </div>',
+        '  <div class="section" style="margin-top:14px">',
+        '    <div class="form-group"><label class="form-label">Bot Token</label><input id="telegramBotToken" class="form-input" type="password" value="' + (telegram?.config?.botToken || '') + '" placeholder="123456:ABC..." /></div>',
+        '    <div class="form-group"><label class="form-label">私聊策略</label><select id="telegramDmPolicy" class="form-select">' +
+               '<option value="pairing"' + (telegram?.config?.dmPolicy === 'pairing' ? ' selected' : '') + '>pairing</option>' +
+               '<option value="allowlist"' + (telegram?.config?.dmPolicy === 'allowlist' ? ' selected' : '') + '>allowlist</option>' +
+               '<option value="open"' + (telegram?.config?.dmPolicy === 'open' ? ' selected' : '') + '>open</option>' +
+               '<option value="disabled"' + (telegram?.config?.dmPolicy === 'disabled' ? ' selected' : '') + '>disabled</option>' +
+            '</select></div>',
+        '    <div class="form-group"><label class="form-label">群聊策略</label><select id="telegramGroupPolicy" class="form-select">' +
+               '<option value="allowlist"' + (telegram?.config?.groupPolicy === 'allowlist' ? ' selected' : '') + '>allowlist</option>' +
+               '<option value="open"' + (telegram?.config?.groupPolicy === 'open' ? ' selected' : '') + '>open</option>' +
+               '<option value="disabled"' + (telegram?.config?.groupPolicy === 'disabled' ? ' selected' : '') + '>disabled</option>' +
+            '</select></div>',
+        '    <div class="form-group"><label class="form-label">allowFrom</label><textarea id="telegramAllowFrom" class="form-input" rows="3" placeholder="每行一个用户 ID，或用逗号分隔">' + (Array.isArray(telegram?.config?.allowFrom) ? telegram.config.allowFrom.join('\\n') : '') + '</textarea></div>',
+        '    <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:#374151"><input id="telegramRequireMention" type="checkbox"' + (telegram?.config?.requireMention !== false ? ' checked' : '') + '> 群聊时需要 @ 机器人</label>',
+        '    <div class="actions" style="margin-top:14px"><button class="btn btn-primary" onclick="saveTelegramChannel()">保存 Telegram 配置</button></div>',
+        '  </div>',
+        '  <div class="divider"></div>',
+        '  <div class="panel-title">运行状态</div>',
+           renderRuntime(telegram?.runtime),
+           renderDiagnostics(telegram?.diagnostics),
+        '</div>',
+        '<div class="panel">',
+        '  <div class="panel-title">飞书</div>',
+        '  <div class="panel-copy">用于飞书私聊/群聊接入。这里写入 <span class="mono">channels.feishu</span>，并尽量补齐插件启用信息。</div>',
+           renderFeishuGuide(),
+        '  <div class="status-grid" style="margin-top:14px">',
+        '    <div class="status-item"><div class="status-label">配置状态</div><div class="status-value ' + (feishu?.configured ? 'success' : 'error') + '">' + (feishu?.configured ? '已配置' : '未配置') + '</div></div>',
+        '    <div class="status-item"><div class="status-label">插件状态</div><div class="status-value">' + (feishu?.pluginReady ? '已启用' : '待确认') + '</div></div>',
+        '    <div class="status-item"><div class="status-label">App ID</div><div class="status-value" style="font-size:12px">' + (feishu?.config?.appId || '未填写') + '</div></div>',
+        '    <div class="status-item"><div class="status-label">连接模式</div><div class="status-value">' + (feishu?.config?.connectionMode || 'websocket') + '</div></div>',
+        '  </div>',
+        '  <div class="section" style="margin-top:14px">',
+        '    <div class="form-group"><label class="form-label">App ID</label><input id="feishuAppId" class="form-input" value="' + (feishu?.config?.appId || '') + '" placeholder="cli_xxx" /></div>',
+        '    <div class="form-group"><label class="form-label">App Secret</label><input id="feishuAppSecret" type="password" class="form-input" value="' + (feishu?.config?.appSecret || '') + '" placeholder="请输入 App Secret" /></div>',
+        '    <div class="form-group"><label class="form-label">连接模式</label><select id="feishuConnectionMode" class="form-select">' +
+               '<option value="websocket"' + (feishu?.config?.connectionMode === 'websocket' ? ' selected' : '') + '>websocket</option>' +
+               '<option value="webhook"' + (feishu?.config?.connectionMode === 'webhook' ? ' selected' : '') + '>webhook</option>' +
+            '</select></div>',
+        '    <div class="form-group"><label class="form-label">Verification Token（仅 webhook）</label><input id="feishuVerificationToken" class="form-input" value="' + (feishu?.config?.verificationToken || '') + '" placeholder="Webhook 模式必填" /></div>',
+        '    <div class="form-group"><label class="form-label">私聊策略</label><select id="feishuDmPolicy" class="form-select">' +
+               '<option value="pairing"' + (feishu?.config?.dmPolicy === 'pairing' ? ' selected' : '') + '>pairing</option>' +
+               '<option value="allowlist"' + (feishu?.config?.dmPolicy === 'allowlist' ? ' selected' : '') + '>allowlist</option>' +
+               '<option value="open"' + (feishu?.config?.dmPolicy === 'open' ? ' selected' : '') + '>open</option>' +
+               '<option value="disabled"' + (feishu?.config?.dmPolicy === 'disabled' ? ' selected' : '') + '>disabled</option>' +
+            '</select></div>',
+        '    <div class="form-group"><label class="form-label">群聊策略</label><select id="feishuGroupPolicy" class="form-select">' +
+               '<option value="allowlist"' + (feishu?.config?.groupPolicy === 'allowlist' ? ' selected' : '') + '>allowlist</option>' +
+               '<option value="open"' + (feishu?.config?.groupPolicy === 'open' ? ' selected' : '') + '>open</option>' +
+               '<option value="disabled"' + (feishu?.config?.groupPolicy === 'disabled' ? ' selected' : '') + '>disabled</option>' +
+            '</select></div>',
+        '    <div class="form-group"><label class="form-label">allowFrom（可选）</label><textarea id="feishuAllowFrom" class="form-input" rows="3" placeholder="每行一个用户 ID，或用逗号分隔">' + (Array.isArray(feishu?.config?.allowFrom) ? feishu.config.allowFrom.join('\\n') : '') + '</textarea></div>',
+        '    <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:#374151"><input id="feishuRequireMention" type="checkbox"' + (feishu?.config?.requireMention !== false ? ' checked' : '') + '> 群聊时需要 @ 机器人</label>',
+        '    <div class="actions" style="margin-top:14px"><button class="btn btn-primary" onclick="saveFeishuChannel()">保存飞书配置</button></div>',
+        '  </div>',
+        '  <div class="divider"></div>',
+        '  <div class="panel-title">运行状态</div>',
+           renderRuntime(feishu?.runtime),
+           renderDiagnostics(feishu?.diagnostics),
+        '</div>',
+      ].join('');
+    }
+
+    async function saveTelegramChannel() {
+      const res = await api('channels/save-telegram', {
+        botToken: $('telegramBotToken')?.value || '',
+        dmPolicy: $('telegramDmPolicy')?.value || 'pairing',
+        groupPolicy: $('telegramGroupPolicy')?.value || 'allowlist',
+        allowFrom: $('telegramAllowFrom')?.value || '',
+        requireMention: !!$('telegramRequireMention')?.checked,
+      });
+      if (!res.success) {
+        toast(res.error || '保存失败', 'error');
+        return;
+      }
+      state.channelsData = res;
+      state.channelsLoaded = true;
+      renderChannels();
+      toast(res.message || 'Telegram 配置已保存');
+      await promptChannelRestartIfNeeded();
+    }
+
+    async function saveFeishuChannel() {
+      const res = await api('channels/save-feishu', {
+        appId: $('feishuAppId')?.value || '',
+        appSecret: $('feishuAppSecret')?.value || '',
+        connectionMode: $('feishuConnectionMode')?.value || 'websocket',
+        verificationToken: $('feishuVerificationToken')?.value || '',
+        dmPolicy: $('feishuDmPolicy')?.value || 'pairing',
+        groupPolicy: $('feishuGroupPolicy')?.value || 'allowlist',
+        allowFrom: $('feishuAllowFrom')?.value || '',
+        requireMention: !!$('feishuRequireMention')?.checked,
+      });
+      if (!res.success) {
+        toast(res.error || '保存失败', 'error');
+        return;
+      }
+      state.channelsData = res;
+      state.channelsLoaded = true;
+      renderChannels();
+      toast(res.message || '飞书配置已保存');
+      await promptChannelRestartIfNeeded();
+    }
+
+    async function promptChannelRestartIfNeeded() {
+      if (!state.status?.running) return;
+      const confirmed = confirm('OpenClaw 当前正在运行。通知渠道配置通常需要重启服务后才能完整生效。现在就重启吗？');
+      if (!confirmed) return;
+      await stop();
+      await start();
+      await refreshChannels();
     }
 
     // ============================================
@@ -2868,7 +3522,7 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
       return handleStart(config);
 
     case 'status':
-      return { success: true, status: getGatewayRuntimeStatus(config) };
+      return { success: true, status: await getGatewayRuntimeStatusAsync(config) };
 
     case 'license':
       return verifyLicenseStatus(config);
@@ -2881,6 +3535,18 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
 
     case 'skills/uninstall':
       return handleSkillUninstall(data, config);
+
+    case 'channels/status':
+      return getNotificationChannelsStatus(config);
+
+    case 'channels/probe':
+      return getNotificationChannelsStatus(config, { probe: true });
+
+    case 'channels/save-telegram':
+      return handleSaveTelegramChannel(data, config);
+
+    case 'channels/save-feishu':
+      return handleSaveFeishuChannel(data, config);
 
     default:
       // 其他操作使用同步处理
@@ -2973,8 +3639,8 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     addLog('检查系统依赖...');
     const deps = checkDependencies();
     if (!deps.node.valid) {
-      addLog(`错误: Node.js 版本过低 (当前: v${deps.node.version}, 需要: v18.0.0)`, 'error');
-      return { success: false, error: 'Node.js 版本过低，请升级到 v18 或更高版本', logs };
+      addLog(`错误: Node.js 版本过低 (当前: v${deps.node.version}, 需要: v${OPENCLAW_MIN_NODE_VERSION})`, 'error');
+      return { success: false, error: `Node.js 版本过低，请升级到 v${OPENCLAW_MIN_NODE_VERSION} 或更高版本`, logs };
     }
     if (!deps.git) {
       const gitInstall = ensureDependencyInstalled('git', addLog);
@@ -3182,6 +3848,145 @@ async function handleConfigAsync(data: Record<string, unknown>, config: Record<s
   return { success: true, config };
 }
 
+function mergeChannelConfig(
+  config: Record<string, unknown>,
+  channelId: 'telegram' | 'feishu',
+  nextChannelConfig: Record<string, unknown>
+): Record<string, unknown> {
+  const snapshot = readManagedOpenClawConfig(config);
+  const nextConfig = { ...snapshot.config };
+  const channels = { ...((nextConfig.channels as Record<string, unknown>) || {}) };
+  const currentChannel = (channels[channelId] as Record<string, unknown> | undefined) || {};
+  channels[channelId] = {
+    ...currentChannel,
+    ...nextChannelConfig,
+  };
+  nextConfig.channels = channels;
+  writeManagedOpenClawConfig(config, nextConfig);
+  return nextConfig;
+}
+
+function handleSaveTelegramChannel(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+  const botToken = String(data.botToken || '').trim();
+  const dmPolicy = String(data.dmPolicy || 'pairing').trim();
+  const groupPolicy = String(data.groupPolicy || 'allowlist').trim();
+  const allowFrom = parseAllowFromInput(data.allowFrom);
+  const requireMention = data.requireMention !== false;
+
+  if (!botToken) {
+    return { success: false, error: '请输入 Telegram Bot Token' };
+  }
+  if (!['pairing', 'allowlist', 'open', 'disabled'].includes(dmPolicy)) {
+    return { success: false, error: 'Telegram 私聊策略不正确' };
+  }
+  if (!['allowlist', 'open', 'disabled'].includes(groupPolicy)) {
+    return { success: false, error: 'Telegram 群聊策略不正确' };
+  }
+  if (dmPolicy === 'allowlist' && allowFrom.length === 0) {
+    return { success: false, error: '私聊策略为“仅允许名单”时，请至少填写一个 allowFrom' };
+  }
+  if (dmPolicy === 'open' && !allowFrom.includes('*')) {
+    return { success: false, error: '私聊策略为“全部放行”时，allowFrom 需要包含 *' };
+  }
+
+  const snapshot = readManagedOpenClawConfig(config);
+  const existingTelegram =
+    ((snapshot.config.channels as Record<string, unknown> | undefined)?.telegram as Record<string, unknown> | undefined) || {};
+  const existingGroups = (existingTelegram.groups as Record<string, unknown> | undefined) || {};
+  const existingWildcardGroup = (existingGroups['*'] as Record<string, unknown> | undefined) || {};
+
+  mergeChannelConfig(config, 'telegram', {
+    enabled: true,
+    botToken,
+    dmPolicy,
+    groupPolicy,
+    allowFrom,
+    groups: {
+      ...existingGroups,
+      '*': {
+        ...existingWildcardGroup,
+        requireMention,
+      },
+    },
+  });
+
+  const status = getNotificationChannelsStatus(config);
+  return {
+    ...status,
+    message: 'Telegram 配置已保存。若 OpenClaw 正在运行，建议重启一次服务让渠道配置完整生效。',
+  };
+}
+
+function handleSaveFeishuChannel(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+  const appId = String(data.appId || '').trim();
+  const appSecret = String(data.appSecret || '').trim();
+  const connectionMode = String(data.connectionMode || 'websocket').trim();
+  const verificationToken = String(data.verificationToken || '').trim();
+  const dmPolicy = String(data.dmPolicy || 'pairing').trim();
+  const groupPolicy = String(data.groupPolicy || 'allowlist').trim();
+  const requireMention = data.requireMention !== false;
+  const allowFrom = parseAllowFromInput(data.allowFrom);
+
+  if (!appId) {
+    return { success: false, error: '请输入飞书 App ID' };
+  }
+  if (!appSecret) {
+    return { success: false, error: '请输入飞书 App Secret' };
+  }
+  if (!['websocket', 'webhook'].includes(connectionMode)) {
+    return { success: false, error: '飞书连接模式不正确' };
+  }
+  if (connectionMode === 'webhook' && !verificationToken) {
+    return { success: false, error: 'Webhook 模式需要填写 Verification Token' };
+  }
+  if (!['pairing', 'allowlist', 'open', 'disabled'].includes(dmPolicy)) {
+    return { success: false, error: '飞书私聊策略不正确' };
+  }
+  if (!['allowlist', 'open', 'disabled'].includes(groupPolicy)) {
+    return { success: false, error: '飞书群聊策略不正确' };
+  }
+
+  const snapshot = readManagedOpenClawConfig(config);
+  const existingFeishu =
+    ((snapshot.config.channels as Record<string, unknown> | undefined)?.feishu as Record<string, unknown> | undefined) || {};
+
+  const nextConfig = mergeChannelConfig(config, 'feishu', {
+    enabled: true,
+    appId,
+    appSecret,
+    connectionMode,
+    ...(connectionMode === 'webhook'
+      ? { verificationToken }
+      : existingFeishu.verificationToken !== undefined
+        ? { verificationToken: existingFeishu.verificationToken }
+        : {}),
+    dmPolicy,
+    groupPolicy,
+    requireMention,
+    ...(allowFrom.length > 0 ? { allowFrom } : {}),
+  });
+
+  const plugins = { ...((nextConfig.plugins as Record<string, unknown>) || {}) };
+  const allow = Array.isArray(plugins.allow)
+    ? plugins.allow.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+  if (!allow.includes('feishu')) {
+    allow.push('feishu');
+  }
+  plugins.allow = allow;
+  const entries = { ...((plugins.entries as Record<string, unknown>) || {}) };
+  entries.feishu = { ...((entries.feishu as Record<string, unknown>) || {}), enabled: true };
+  plugins.entries = entries;
+  nextConfig.plugins = plugins;
+  writeManagedOpenClawConfig(config, nextConfig);
+
+  const status = getNotificationChannelsStatus(config);
+  return {
+    ...status,
+    message: '飞书配置已保存。若 OpenClaw 还未加载 feishu 插件，请先确认插件可用，再重启服务。',
+  };
+}
+
 // API 连接测试
 async function handleTestConnection(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const providerKey = String(data.provider || config.provider || 'custom') as keyof typeof PROVIDERS;
@@ -3380,18 +4185,22 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     }
 
     // 写入配置文件
-    const configDir = path.join(config.installPath as string, '.claude');
+    const managedConfigPath = getManagedOpenClawConfigPath(config);
+    const configDir = path.dirname(managedConfigPath);
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true });
     }
-    const configPath = path.join(configDir, 'openclaw.json');
-    fs.writeFileSync(configPath, JSON.stringify(openclawConfig, null, 2));
+    const configPath = managedConfigPath;
+    const existingManagedConfig = readManagedOpenClawConfig(config).config;
+    const mergedOpenClawConfig = mergeOpenClawConfigSections(existingManagedConfig, openclawConfig);
+    fs.writeFileSync(configPath, JSON.stringify(mergedOpenClawConfig, null, 2));
     console.log(`[配置] 已写入: ${configPath}`);
 
     // 环境变量
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PORT: String(gatewayPort),
+      OPENCLAW_CONFIG_PATH: managedConfigPath,
       [provider.envKey]: String(config.apiKey || ''),
       OPENAI_BASE_URL: baseUrl,
       API_KEY: String(config.apiKey || ''),
@@ -3484,7 +4293,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
       return { success: false, error: startupResult.error || 'OpenClaw 启动失败' };
     }
 
-    return { success: true, status: getGatewayRuntimeStatus(config) };
+    return { success: true, status: await getGatewayRuntimeStatusAsync(config) };
   } catch (e) {
     gatewayStatus = 'stopped';
     const error = e as Error;
@@ -3643,30 +4452,63 @@ async function handleSkillInstall(data: Record<string, unknown>, config: Record<
   }
 
   try {
-    console.log(`[技能] 正在安装: ${skillId}`);
-    const result = runCommandArgs(
-      'npx',
-      config.installPath as string,
-      {
-        args: ['clawhub@latest', 'install', skillId],
-        timeout: 120000,
-      }
-    );
+    const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+    const gatewayToken = readGatewayTokenFromHome();
+    if (!gatewayToken) {
+      return { success: false, error: '技能安装需要先启动 OpenClaw 服务，生成网关访问令牌后才能继续' };
+    }
 
-    if (result.success) {
-      const installedSkills = await getInstalledOpenClawSkillsFromStatus(config);
-      const installed = installedSkills.find((skill) => skill.id === skillId);
-      if (!installed) {
-        return {
-          success: false,
-          error: `安装命令已执行，但 OpenClaw 当前技能列表中还没有识别到 "${skillId}"。请检查该 skill id 是否正确，并在 OpenClaw 里执行一次技能刷新。`,
-        };
-      }
-      console.log(`[技能] 安装成功: ${skillId}`);
-      return { success: true, message: `技能 "${skillId}" 安装成功，来源：${installed.source}` };
-    } else {
+    const gatewayHealthy = await getGatewayHealthStatus(config);
+    if (!gatewayHealthy) {
+      return { success: false, error: '技能安装需要 OpenClaw 服务正在运行，请先启动服务后再安装' };
+    }
+
+    const report = getOpenClawGatewaySkillReport(config);
+    if (!report?.skills) {
+      return { success: false, error: '无法读取 OpenClaw 技能状态，请确认 OpenClaw 服务运行正常' };
+    }
+
+    const skill = report.skills.find((entry) => String(entry?.name || '').trim() === skillId);
+    if (!skill) {
+      return { success: false, error: `OpenClaw 当前技能目录里没有找到 "${skillId}"，请先在 ClawHub 确认 skill id 是否正确` };
+    }
+
+    const installOption = Array.isArray(skill.install) ? skill.install[0] : undefined;
+    const installId = String(installOption?.id || '').trim();
+    if (!installId) {
+      return { success: false, error: `技能 "${skillId}" 当前没有可用的自动安装方式` };
+    }
+
+    console.log(`[技能] 正在安装: ${skillId} (${installId})`);
+    const installCall = buildGatewayCallCommand(
+      config.installPath as string,
+      gatewayPort,
+      gatewayToken,
+      'skills.install',
+      { name: skillId, installId, timeoutMs: 120000 }
+    );
+    const result = runCommandArgs(installCall.file, config.installPath as string, {
+      args: installCall.args,
+      timeout: 180000,
+      ignoreError: true,
+      silent: true,
+    });
+
+    if (!result.success) {
       return { success: false, error: result.stderr || '安装失败' };
     }
+
+    const installedSkills = await getInstalledOpenClawSkillsFromStatus(config);
+    const installed = installedSkills.find((entry) => entry.id === skillId);
+    if (!installed) {
+      return {
+        success: false,
+        error: `OpenClaw 已执行技能安装，但当前技能状态里还没有识别到 "${skillId}"。请稍后刷新，或在 OpenClaw 里执行一次技能检查。`,
+      };
+    }
+
+    console.log(`[技能] 安装成功: ${skillId}`);
+    return { success: true, message: `技能 "${skillId}" 安装成功，来源：${installed.source}` };
   } catch (e) {
     const error = e as Error;
     console.error(`[技能] 安装失败: ${error.message}`);

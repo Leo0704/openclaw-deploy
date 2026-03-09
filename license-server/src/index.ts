@@ -1,5 +1,16 @@
 import { activate } from './activate';
 import { verify } from './verify';
+import { ActivateRequest, PRODUCT_ID, VerifyRequest } from './types';
+
+class RequestError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.name = 'RequestError';
+    this.statusCode = statusCode;
+  }
+}
 
 function setCorsHeaders(response: any) {
   response.setHeader('Access-Control-Allow-Origin', '*');
@@ -27,6 +38,62 @@ async function readBody(request: any): Promise<string> {
   });
 }
 
+function parseJsonBody(body: string): unknown {
+  if (!body) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new RequestError(400, '请求体不是合法的 JSON');
+  }
+}
+
+function requireNonEmptyString(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new RequestError(400, `${fieldName} 不能为空`);
+  }
+  return value.trim();
+}
+
+function parseActivateRequest(payload: unknown): ActivateRequest {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new RequestError(400, '请求体格式不正确');
+  }
+
+  const input = payload as Record<string, unknown>;
+  const productId = requireNonEmptyString(input.productId, 'productId');
+  if (productId !== PRODUCT_ID) {
+    throw new RequestError(400, 'productId 无效');
+  }
+
+  return {
+    code: requireNonEmptyString(input.code, 'code'),
+    deviceFingerprint: requireNonEmptyString(input.deviceFingerprint, 'deviceFingerprint'),
+    deviceName: requireNonEmptyString(input.deviceName, 'deviceName'),
+    productId,
+  };
+}
+
+function parseVerifyRequest(payload: unknown): VerifyRequest {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new RequestError(400, '请求体格式不正确');
+  }
+
+  const input = payload as Record<string, unknown>;
+  const productId = requireNonEmptyString(input.productId, 'productId');
+  if (productId !== PRODUCT_ID) {
+    throw new RequestError(400, 'productId 无效');
+  }
+
+  return {
+    code: requireNonEmptyString(input.code, 'code'),
+    deviceFingerprint: requireNonEmptyString(input.deviceFingerprint, 'deviceFingerprint'),
+    productId,
+  };
+}
+
 export async function handler(request: any, response: any): Promise<void> {
   setCorsHeaders(response);
 
@@ -42,7 +109,7 @@ export async function handler(request: any, response: any): Promise<void> {
     const body = await readBody(request);
 
     if (path === '/activate' && method === 'POST') {
-      const payload = body ? JSON.parse(body) : {};
+      const payload = parseActivateRequest(parseJsonBody(body));
       const result = await activate(payload);
       response.setStatusCode(200);
       response.send(JSON.stringify(result));
@@ -50,7 +117,7 @@ export async function handler(request: any, response: any): Promise<void> {
     }
 
     if (path === '/verify' && method === 'POST') {
-      const payload = body ? JSON.parse(body) : {};
+      const payload = parseVerifyRequest(parseJsonBody(body));
       const result = await verify(payload);
       response.setStatusCode(200);
       response.send(JSON.stringify(result));
@@ -67,7 +134,8 @@ export async function handler(request: any, response: any): Promise<void> {
     response.send(JSON.stringify({ error: 'Not Found' }));
   } catch (error: any) {
     console.error('Handler error:', error);
-    response.setStatusCode(500);
-    response.send(JSON.stringify({ error: 'Internal Server Error', message: error.message }));
+    const statusCode = error instanceof RequestError ? error.statusCode : 500;
+    response.setStatusCode(statusCode);
+    response.send(JSON.stringify({ error: statusCode === 500 ? 'Internal Server Error' : 'Bad Request', message: error.message }));
   }
 }

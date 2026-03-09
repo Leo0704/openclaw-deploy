@@ -238,7 +238,7 @@ function sleep(ms: number): Promise<void> {
  * 检查网络连接
  */
 export async function checkNetworkConnectivity(
-  testUrls: string[] = ['https://github.com', 'https://api.github.com']
+  testUrls: string[] = DEFAULT_CONNECTIVITY_URLS
 ): Promise<NetworkCheckResult[]> {
   const results: NetworkCheckResult[] = [];
 
@@ -270,7 +270,10 @@ export async function hasNetworkConnection(): Promise<boolean> {
  */
 export async function checkGitHubAccess(): Promise<NetworkCheckResult> {
   const startTime = Date.now();
-  const result = await fetchWithTimeout('https://api.github.com', { method: 'GET', timeout: 10000 });
+  const result = await fetchWithTimeout('https://api.github.com', {
+    method: 'GET',
+    headers: { 'User-Agent': 'Lobster-Assistant' },
+  }, 10000);
   const latency = Date.now() - startTime;
 
   return {
@@ -295,7 +298,16 @@ export async function downloadFile(
   const { timeout = 60000 } = options;
 
   return new Promise((resolve) => {
-    const parsedUrl = new URL(url);
+    let parsedUrl: InstanceType<typeof URL>;
+    try {
+      parsedUrl = new URL(url);
+    } catch (error) {
+      resolve({
+        success: false,
+        error: fromNativeError(error instanceof Error ? error : new Error(String(error)), ErrorType.NETWORK, { url, destPath }),
+      });
+      return;
+    }
     const isHttps = parsedUrl.protocol === 'https:';
     const client = isHttps ? https : http;
 
@@ -310,7 +322,8 @@ export async function downloadFile(
         // 处理重定向
         file.close();
         fs.unlinkSync(destPath);
-        downloadFile(res.headers.location, destPath, options).then(resolve);
+        const redirectedUrl = new URL(res.headers.location, parsedUrl).toString();
+        downloadFile(redirectedUrl, destPath, options).then(resolve);
         return;
       }
 

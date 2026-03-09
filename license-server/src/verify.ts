@@ -1,4 +1,4 @@
-import { VerifyRequest, VerifyResponse } from './types';
+import { VerifyRequest, VerifyResponse, PRODUCT_ID } from './types';
 import { findCode } from './oss';
 
 /**
@@ -6,6 +6,12 @@ import { findCode } from './oss';
  */
 export async function verify(request: VerifyRequest): Promise<VerifyResponse> {
   const { code, deviceFingerprint, productId } = request;
+  if (productId !== PRODUCT_ID) {
+    return {
+      valid: false,
+      message: '产品标识无效',
+    };
+  }
 
   // 查找激活码
   const licenseCode = await findCode(code);

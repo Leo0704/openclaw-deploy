@@ -10,12 +10,15 @@ const os = require('os');
 const net = require('net');
 const { createError, ErrorType, Errors } = require('./error-utils');
 
+export const OPENCLAW_MIN_NODE_VERSION = '22.12.0';
+
 // ============================================
 // 类型定义
 // ============================================
 
 export interface DiskSpaceResult {
   available: boolean;
+  checked: boolean;
   freeBytes: number;
   requiredBytes: number;
   path: string;
@@ -67,7 +70,8 @@ type ExistingInstallState =
 
 function buildUnknownDiskSpaceResult(requiredBytes: number, checkPath: string, reason: string): DiskSpaceResult {
   return {
-    available: true,
+    available: false,
+    checked: false,
     freeBytes: 0,
     requiredBytes,
     path: checkPath,
@@ -132,6 +136,7 @@ export function checkDiskSpace(requiredBytes: number, checkPath: string): DiskSp
 
     return {
       available,
+      checked: true,
       freeBytes,
       requiredBytes,
       path: checkPath,
@@ -277,7 +282,7 @@ export async function findAvailablePort(startPort: number, maxAttempts: number =
 /**
  * 检查 Node.js 版本
  */
-export function checkNodeVersion(minVersion: string = '18.0.0'): NodeVersionResult {
+export function checkNodeVersion(minVersion: string = OPENCLAW_MIN_NODE_VERSION): NodeVersionResult {
   const current = process.versions.node;
 
   const parseVersion = (v: string): number[] => {
@@ -346,7 +351,7 @@ function getCommandVersion(cmd: string): string | null {
  * 检查所有依赖
  */
 export function checkDependencies(): DependencyResult {
-  const nodeCheck = checkNodeVersion('18.0.0');
+  const nodeCheck = checkNodeVersion(OPENCLAW_MIN_NODE_VERSION);
 
   return {
     git: checkCommand('git'),
@@ -377,7 +382,7 @@ export async function performHealthChecks(config: {
   const installState = detectExistingInstallState(config.installPath);
 
   // 1. Node.js 版本检查
-  const nodeCheck = checkNodeVersion('18.0.0');
+  const nodeCheck = checkNodeVersion(OPENCLAW_MIN_NODE_VERSION);
   checks.push({
     name: 'Node.js 版本',
     passed: nodeCheck.valid,
@@ -435,13 +440,13 @@ export async function performHealthChecks(config: {
   const diskCheck = checkDiskSpace(requiredSpace, config.installPath);
   checks.push({
     name: '磁盘空间',
-    passed: diskCheck.available,
+    passed: diskCheck.checked ? diskCheck.available : false,
     message: diskCheck.message || '',
-    severity: diskCheck.message?.startsWith('无法检查磁盘空间') ? 'warning' : diskCheck.available ? 'info' : 'critical',
-    details: { freeBytes: diskCheck.freeBytes, requiredBytes: diskCheck.requiredBytes },
+    severity: !diskCheck.checked ? 'warning' : diskCheck.available ? 'info' : 'critical',
+    details: { freeBytes: diskCheck.freeBytes, requiredBytes: diskCheck.requiredBytes, checked: diskCheck.checked },
   });
-  if (diskCheck.message?.startsWith('无法检查磁盘空间')) {
-    warnings.push(diskCheck.message);
+  if (!diskCheck.checked) {
+    warnings.push(diskCheck.message || '无法检查磁盘空间');
   } else if (!diskCheck.available) {
     errors.push(diskCheck.message || '磁盘空间不足');
   }

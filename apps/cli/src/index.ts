@@ -52,6 +52,7 @@ const RELEASE_REPO_PATH = 'Leo0704/lobster-releases';
 const DEFAULT_LICENSE_SERVER_URL = process.env.LOBSTER_LICENSE_SERVER_URL || 'https://license.lobster-assistant.com';
 const PRODUCT_ID = 'lobster-assistant-desktop';
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
+const ANTHROPIC_API_FORMAT = 'anthropic-messages';
 
 // GitHub 镜像源（国内加速）
 const GITHUB_MIRRORS = [
@@ -265,7 +266,7 @@ const PROVIDERS = {
     name: 'Anthropic (Claude 直连)',
     icon: '🟠',
     type: 'direct',
-    apiFormat: 'anthropic',
+    apiFormat: ANTHROPIC_API_FORMAT,
     envKey: 'ANTHROPIC_API_KEY',
     baseUrl: 'https://api.anthropic.com',
     models: [
@@ -423,6 +424,110 @@ const PROVIDERS = {
     ]
   }
 };
+
+function normalizeApiFormat(value: unknown): string {
+  if (String(value || '').trim() === 'anthropic') {
+    return ANTHROPIC_API_FORMAT;
+  }
+  return String(value || 'openai-completions').trim() || 'openai-completions';
+}
+
+function getAnthropicBaseUrl(baseUrl: string): string {
+  const trimmed = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return trimmed;
+  }
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
+function buildEndpointUrl(baseUrl: string, endpointPath: string): URL {
+  const normalizedBase = String(baseUrl || '').trim().replace(/\/+$/, '');
+  const normalizedPath = String(endpointPath || '').trim().replace(/^\/+/, '');
+  return new NodeURL(`${normalizedBase}/${normalizedPath}`);
+}
+
+function normalizeEndpointId(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildEndpointIdFromUrl(baseUrl: string): string {
+  try {
+    const url = new NodeURL(baseUrl);
+    const host = url.hostname.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    const port = url.port ? `-${url.port}` : '';
+    const candidate = `custom-${host}${port}`;
+    return normalizeEndpointId(candidate) || 'custom';
+  } catch {
+    return 'custom';
+  }
+}
+
+function readJsonFile(filePath: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function detectProjectPackageManager(projectPath: string): 'pnpm' | 'npm' {
+  const packageJsonPath = path.join(projectPath, 'package.json');
+  const packageJson = readJsonFile(packageJsonPath);
+  const packageManager = String(packageJson?.packageManager || '').split('@')[0].trim();
+
+  if (packageManager === 'pnpm' || fs.existsSync(path.join(projectPath, 'pnpm-lock.yaml'))) {
+    return 'pnpm';
+  }
+
+  return 'npm';
+}
+
+function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; command: string } {
+  const pm = detectProjectPackageManager(projectPath);
+  return { pm, command: pm === 'pnpm' ? 'pnpm install' : 'npm install' };
+}
+
+function getBuildCommand(projectPath: string): { pm: 'pnpm' | 'npm'; command: string } {
+  const pm = detectProjectPackageManager(projectPath);
+  return { pm, command: pm === 'pnpm' ? 'pnpm run build' : 'npm run build' };
+}
+
+function getOpenClawStartCommand(projectPath: string, port: number): string {
+  const pm = detectProjectPackageManager(projectPath);
+  return pm === 'pnpm'
+    ? `pnpm openclaw gateway run --port ${port} --allow-unconfigured`
+    : `npm run openclaw -- gateway run --port ${port} --allow-unconfigured`;
+}
+
+function readGatewayTokenFromHome(): string | null {
+  const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+  const configJson = readJsonFile(configPath);
+  const gateway = configJson?.gateway as Record<string, unknown> | undefined;
+  const auth = gateway?.auth as Record<string, unknown> | undefined;
+  const token = String(auth?.token || '').trim();
+  return token || null;
+}
+
+function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; error?: string } {
+  if (!fs.existsSync(path.join(projectPath, 'package.json'))) {
+    return { ready: false, error: 'OpenClaw 安装目录缺少 package.json，请重新部署' };
+  }
+
+  const packageManager = detectProjectPackageManager(projectPath);
+  if (packageManager === 'pnpm' && !checkCommand('pnpm')) {
+    return { ready: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后再启动' };
+  }
+
+  if (!fs.existsSync(path.join(projectPath, 'node_modules'))) {
+    return { ready: false, error: 'OpenClaw 依赖尚未安装，请先执行“部署 OpenClaw”或手动安装依赖' };
+  }
+
+  return { ready: true };
+}
 
 // ============================================
 // 配置
@@ -652,11 +757,23 @@ let gatewayProcess: import('child_process').ChildProcess | null = null;
 let gatewayStatus: 'stopped' | 'starting' | 'running' | 'stopping' = 'stopped';
 let logs: Array<{ time: string; level: string; message: string }> = [];
 
+function getGatewayRuntimeStatus(config: Record<string, unknown>) {
+  const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+  return {
+    installed: !!(config.installPath && fs.existsSync(config.installPath as string)),
+    running: gatewayStatus === 'running' || gatewayStatus === 'starting',
+    state: gatewayStatus,
+    gatewayPort,
+    gatewayToken: readGatewayTokenFromHome(),
+    gatewayUrl: `http://localhost:${gatewayPort}/`,
+  };
+}
+
 // ============================================
 // Web 界面 HTML
 // ============================================
 
-function getHTML(config: Record<string, unknown>, status: { installed: boolean; running: boolean }) {
+function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getGatewayRuntimeStatus>) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -803,7 +920,22 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
     // 默认选择第一个推荐模型
     const defaultProvider = '${config.provider || 'anthropic'}';
     const defaultModel = '${config.model}' || (PROVIDERS[defaultProvider]?.models.find(m => m.recommended)?.id || PROVIDERS[defaultProvider]?.models[0]?.id || '');
-    const state = { config: ${JSON.stringify(config)}, status: ${JSON.stringify(status)}, logs: [], selectedProvider: defaultProvider, selectedModel: defaultModel, currentTab: 'status', skillsLoaded: false, helpLoaded: false };
+    const state = {
+      config: ${JSON.stringify(config)},
+      status: ${JSON.stringify(status)},
+      logs: [],
+      selectedProvider: defaultProvider,
+      selectedModel: defaultModel,
+      currentTab: 'status',
+      skillsLoaded: false,
+      helpLoaded: false,
+      customWizard: {
+        verified: false,
+        verifying: false,
+        message: '',
+        suggestedEndpointId: '',
+      },
+    };
 
     function $(id) { return document.getElementById(id); }
     function toast(msg, type = 'success') {
@@ -968,7 +1100,15 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
             }
             <button class="btn btn-secondary" onclick="showConfig()">⚙️ 配置</button>
             \${s.running ? '<button class="btn btn-secondary" onclick="openGateway()">🌐 打开 OpenClaw</button>' : ''}
+            \${s.running ? '<button class="btn btn-secondary" onclick="copyGatewayLink()">🔗 复制自动认证链接</button>' : ''}
           </div>
+
+          \${s.running && s.gatewayToken ? \`
+            <div class="note note-info" style="margin-top:12px">
+              Gateway Token: <code style="word-break:break-all">\${s.gatewayToken}</code><br>
+              “打开 OpenClaw” 会自动带上 token。只有手动打开其它浏览器标签页时，才需要去 Control UI settings 粘贴它。
+            </div>
+          \` : ''}
 
           <div class="divider"></div>
 
@@ -1051,6 +1191,7 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
 
     function selectProvider(key) {
       state.selectedProvider = key;
+      resetCustomWizard();
       const provider = PROVIDERS[key];
       if (provider && provider.models.length > 0) {
         const recommended = provider.models.find(m => m.recommended);
@@ -1337,15 +1478,73 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
       if (!state.config.apiKey) return toast('请先配置 API Key', 'error');
       toast('正在启动...');
       const res = await api('start');
-      if (res.success) { state.status.running = true; toast('服务已启动！'); render(); }
+      if (res.success) {
+        if (res.status) state.status = res.status;
+        else state.status.running = true;
+        toast('服务已启动！');
+        render();
+      }
       else toast(res.error || '启动失败', 'error');
     }
 
     async function stop() {
       toast('正在停止...');
       const res = await api('stop');
-      if (res.success) { state.status.running = false; toast('服务已停止'); render(); }
+      if (res.success) {
+        state.status.running = false;
+        state.status.state = 'stopped';
+        toast('服务已停止');
+        render();
+      }
       else toast(res.error || '停止失败', 'error');
+    }
+
+    function normalizeEndpointIdClient(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    function buildEndpointIdFromUrlClient(baseUrl) {
+      try {
+        const url = new URL(baseUrl);
+        const host = url.hostname.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+        const port = url.port ? '-' + url.port : '';
+        return normalizeEndpointIdClient('custom-' + host + port) || 'custom';
+      } catch {
+        return 'custom';
+      }
+    }
+
+    function resetCustomWizard() {
+      state.customWizard = {
+        verified: false,
+        verifying: false,
+        message: '',
+        suggestedEndpointId: '',
+      };
+    }
+
+    function syncCustomEndpointId() {
+      const endpointInput = $('customEndpointId');
+      const baseUrlInput = $('baseUrl');
+      if (!endpointInput || !baseUrlInput) return;
+      if (!endpointInput.value || endpointInput.value === state.customWizard.suggestedEndpointId) {
+        const nextId = buildEndpointIdFromUrlClient(baseUrlInput.value);
+        endpointInput.value = nextId;
+        state.customWizard.suggestedEndpointId = nextId;
+      }
+    }
+
+    function getGatewayOpenUrl() {
+      const baseUrl = state.status.gatewayUrl || ('http://localhost:' + (state.config.gatewayPort || ${DEFAULT_GATEWAY_PORT}) + '/');
+      const token = state.status.gatewayToken;
+      if (!token) {
+        return baseUrl;
+      }
+      return baseUrl.replace(/#.*$/, '') + '#token=' + encodeURIComponent(token);
     }
 
     function showConfig() {
@@ -1412,29 +1611,45 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
         <div class="section">
           <div class="form-group">
             <label class="form-label">API Key</label>
-            <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
+            <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key" \${isCustom ? 'oninput="resetCustomWizard()"' : ''}>
           </div>
 
           \${isCustom || currentProvider.type === 'proxy' ? \`
           <div class="form-group">
             <label class="form-label">API 地址 (Base URL)</label>
-            <input type="text" id="baseUrl" class="form-input" value="\${c.baseUrl || currentProvider.baseUrl || ''}" placeholder="例如: https://api.example.com/v1">
-            <small style="color:#6B7280;font-size:12px">留空使用默认地址</small>
+            <input type="text" id="baseUrl" class="form-input" value="\${c.baseUrl || currentProvider.baseUrl || ''}" placeholder="例如: https://api.example.com/v1" \${isCustom ? 'oninput="syncCustomEndpointId(); resetCustomWizard()"' : ''}>
+            <small style="color:#6B7280;font-size:12px">\${isCustom ? '第 1 步：先填写 OpenClaw 里要用的 Endpoint Base URL' : '留空使用默认地址'}</small>
           </div>
           \` : ''}
 
           \${isCustom ? \`
+          <div class="note note-info" style="margin: 12px 0 16px 0;">
+            自定义 API 按 OpenClaw 官方引导式流程配置：先填地址和密钥，再选择兼容类型与模型，验证通过后再保存。
+          </div>
+
           <div class="form-group">
-            <label class="form-label">API 格式</label>
-            <select id="apiFormat" class="form-select">
-              <option value="openai-completions" \${(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI 兼容格式</option>
-              <option value="anthropic" \${c.apiFormat === 'anthropic' ? 'selected' : ''}>Anthropic 格式</option>
+            <label class="form-label">第 2 步：Endpoint compatibility</label>
+            <select id="apiFormat" class="form-select" onchange="resetCustomWizard()">
+              <option value="openai-completions" \${normalizeApiFormat(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI-compatible</option>
+              <option value="${ANTHROPIC_API_FORMAT}" \${normalizeApiFormat(c.apiFormat) === '${ANTHROPIC_API_FORMAT}' ? 'selected' : ''}>Anthropic-compatible</option>
+              <option value="unknown">Unknown (自动探测)</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">自定义模型 ID</label>
-            <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || state.selectedModel || ''}" placeholder="例如: gpt-4o, claude-3-opus">
+            <label class="form-label">第 3 步：Model ID</label>
+            <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || state.selectedModel || ''}" placeholder="例如: glm-5, gpt-4o, claude-sonnet-4" oninput="resetCustomWizard()">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">第 4 步：Endpoint ID</label>
+            <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrl(c.baseUrl || currentProvider.baseUrl || '') || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
+            <small style="color:#6B7280;font-size:12px">OpenClaw 会把这个作为 provider 标识使用</small>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">可选：Model alias</label>
+            <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: local, glm">
           </div>
 
           <div class="form-group">
@@ -1445,6 +1660,10 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
           <div class="form-group">
             <label class="form-label">最大输出 Token</label>
             <input type="number" id="maxTokens" class="form-input" value="\${c.maxTokens || 4096}" placeholder="4096">
+          </div>
+
+          <div id="custom-wizard-result" style="margin-top:12px">
+            \${state.customWizard.message ? \`<div class="note" style="background:\${state.customWizard.verified ? '#D1FAE5' : '#FEF2F2'};color:\${state.customWizard.verified ? '#065F46' : '#991B1B'}">\${state.customWizard.message}</div>\` : ''}
           </div>
           \` : ''}
         </div>
@@ -1460,7 +1679,7 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
 
         <div class="actions">
           <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
-          <button class="btn btn-secondary" onclick="testConnection()">测试连接</button>
+          <button class="btn btn-secondary" onclick="testConnection()">\${isCustom ? '验证 Endpoint' : '测试连接'}</button>
           <button class="btn btn-secondary" onclick="render()">取消</button>
         </div>
 
@@ -1473,16 +1692,57 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
       resultEl.style.display = 'block';
       resultEl.innerHTML = '<div style="text-align:center;padding:20px;color:#6B7280">🔄 正在测试连接...</div>';
 
-      const res = await api('test-connection', {
+      const isCustom = state.selectedProvider === 'custom';
+      const requestedFormat = $('apiFormat')?.value || 'openai-completions';
+      const baseUrl = $('baseUrl')?.value;
+      const model = $('customModelId')?.value || state.selectedModel;
+      const endpointIdInput = $('customEndpointId');
+      const suggestedEndpointId = buildEndpointIdFromUrlClient(baseUrl);
+
+      if (endpointIdInput && !endpointIdInput.value) {
+        endpointIdInput.value = suggestedEndpointId;
+      }
+
+      const attempt = async (apiFormatValue) => api('test-connection', {
         provider: state.selectedProvider,
         apiKey: $('apiKey')?.value,
-        baseUrl: $('baseUrl')?.value,
-        model: state.selectedModel,
+        baseUrl,
+        model,
+        apiFormat: apiFormatValue,
       });
 
+      let res;
+      let resolvedFormat = requestedFormat;
+
+      if (isCustom && requestedFormat === 'unknown') {
+        const openaiRes = await attempt('openai-completions');
+        if (openaiRes.success) {
+          res = openaiRes;
+          resolvedFormat = 'openai-completions';
+        } else {
+          const anthropicRes = await attempt('${ANTHROPIC_API_FORMAT}');
+          res = anthropicRes;
+          if (anthropicRes.success) {
+            resolvedFormat = '${ANTHROPIC_API_FORMAT}';
+          }
+        }
+      } else {
+        res = await attempt(requestedFormat);
+      }
+
       if (res.success) {
+        if (isCustom) {
+          state.customWizard.verified = true;
+          state.customWizard.message = '验证成功，已与 OpenClaw 源码兼容格式对齐。现在可以保存配置。';
+          state.customWizard.suggestedEndpointId = suggestedEndpointId;
+          if ($('apiFormat')) $('apiFormat').value = resolvedFormat;
+        }
         resultEl.innerHTML = \`<div class="note" style="background:#D1FAE5;color:#065F46">✅ 连接成功！模型响应正常</div>\`;
       } else {
+        if (isCustom) {
+          state.customWizard.verified = false;
+          state.customWizard.message = '验证失败：' + (res.error || '未知错误');
+        }
         resultEl.innerHTML = \`<div class="note" style="background:#FEE2E2;color:#991B1B">❌ 连接失败：\${res.error || '未知错误'}</div>\`;
       }
     }
@@ -1495,7 +1755,7 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
       const provider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
       const isCustom = state.selectedProvider === 'custom';
 
-      const configData: Record<string, unknown> = {
+      const configData = {
         apiKey: $('apiKey')?.value || '',
         gatewayPort: parseInt($('gport')?.value || String(DEFAULT_GATEWAY_PORT)),
         provider: state.selectedProvider,
@@ -1508,8 +1768,13 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
       }
 
       if (isCustom) {
+        if (!state.customWizard.verified) {
+          return toast('请先完成 Endpoint 验证，再保存自定义模型配置', 'error');
+        }
         configData.apiFormat = $('apiFormat')?.value || 'openai-completions';
         configData.customModelId = $('customModelId')?.value || state.selectedModel;
+        configData.customEndpointId = $('customEndpointId')?.value || buildEndpointIdFromUrlClient($('baseUrl')?.value || '');
+        configData.customModelAlias = $('customModelAlias')?.value || '';
         configData.contextWindow = parseInt($('contextWindow')?.value || '128000');
         configData.maxTokens = parseInt($('maxTokens')?.value || '4096');
       }
@@ -1527,7 +1792,17 @@ function getHTML(config: Record<string, unknown>, status: { installed: boolean; 
     }
 
     function openGateway() {
-      window.open('http://localhost:' + (state.config.gatewayPort || ${DEFAULT_GATEWAY_PORT}), '_blank');
+      window.open(getGatewayOpenUrl(), '_blank');
+    }
+
+    async function copyGatewayLink() {
+      const url = getGatewayOpenUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('自动认证链接已复制');
+      } catch {
+        toast('复制失败，请手动打开 OpenClaw', 'error');
+      }
     }
 
     async function pollLogs() {
@@ -1603,14 +1878,7 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
       return handleStart(config);
 
     case 'status':
-      return {
-        success: true,
-        status: {
-          installed: !!(config.installPath && fs.existsSync(config.installPath as string)),
-          running: gatewayStatus === 'running' || gatewayStatus === 'starting',
-          state: gatewayStatus,
-        },
-      };
+      return { success: true, status: getGatewayRuntimeStatus(config) };
 
     case 'license':
       return verifyLicenseStatus(config);
@@ -1753,8 +2021,10 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     config.apiKey = data.apiKey;
     config.gatewayPort = gatewayPort;
     if (data.baseUrl !== undefined) config.baseUrl = data.baseUrl;
-    if (data.apiFormat !== undefined) config.apiFormat = data.apiFormat;
+    if (data.apiFormat !== undefined) config.apiFormat = normalizeApiFormat(data.apiFormat);
     if (data.customModelId !== undefined) config.customModelId = data.customModelId;
+    if (data.customEndpointId !== undefined) config.customEndpointId = normalizeEndpointId(data.customEndpointId) || 'custom';
+    if (data.customModelAlias !== undefined) config.customModelAlias = String(data.customModelAlias || '').trim();
     if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
     if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
 
@@ -1802,10 +2072,20 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
       }
     }
 
+    const projectPackageManager = detectProjectPackageManager(installPath);
+    if (projectPackageManager === 'pnpm' && !deps.pnpm) {
+      addLog('错误: 当前 OpenClaw 源码要求使用 pnpm，但系统未安装 pnpm', 'error');
+      return {
+        success: false,
+        error: '当前 OpenClaw 源码要求使用 pnpm。请先执行 `npm install -g pnpm` 或启用 Corepack 后重试。',
+        logs,
+      };
+    }
+
     // 7. 安装依赖
-    const pm = deps.pnpm ? 'pnpm' : 'npm';
-    addLog(`安装依赖 (${pm})...`);
-    const installResult = runCommand(`${pm} install`, installPath, {
+    const installPlan = getInstallCommand(installPath);
+    addLog(`安装依赖 (${installPlan.pm})...`);
+    const installResult = runCommand(installPlan.command, installPath, {
       timeout: 600000, // 10分钟
       retries: 2,
     });
@@ -1817,7 +2097,8 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
 
     // 8. 构建
     addLog('构建项目...');
-    const buildResult = runCommand(`${pm} run build`, installPath, { ignoreError: true, timeout: 300000 });
+    const buildPlan = getBuildCommand(installPath);
+    const buildResult = runCommand(buildPlan.command, installPath, { ignoreError: true, timeout: 300000 });
     if (buildResult.success) {
       addLog('构建成功 ✓', 'success');
     } else {
@@ -1830,7 +2111,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
 
     addLog('🎉 部署完成！', 'success');
 
-    return { success: true, config, status: { installed: true, running: false }, logs };
+    return { success: true, config, status: getGatewayRuntimeStatus(config), logs };
   } catch (e) {
     const error = e as Error;
     addLog(`❌ 部署失败: ${error.message}`, 'error');
@@ -1873,8 +2154,10 @@ async function handleConfigAsync(data: Record<string, unknown>, config: Record<s
 
   // 保存高级配置
   if (data.baseUrl !== undefined) config.baseUrl = data.baseUrl;
-  if (data.apiFormat !== undefined) config.apiFormat = data.apiFormat;
+  if (data.apiFormat !== undefined) config.apiFormat = normalizeApiFormat(data.apiFormat);
   if (data.customModelId !== undefined) config.customModelId = data.customModelId;
+  if (data.customEndpointId !== undefined) config.customEndpointId = normalizeEndpointId(data.customEndpointId) || 'custom';
+  if (data.customModelAlias !== undefined) config.customModelAlias = String(data.customModelAlias || '').trim();
   if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
   if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
   if (data.licenseServerUrl !== undefined) config.licenseServerUrl = data.licenseServerUrl;
@@ -1890,34 +2173,53 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
   const apiKey = (data.apiKey || config.apiKey) as string;
   const baseUrl = (data.baseUrl || config.baseUrl || provider.baseUrl) as string;
   const model = (data.model || config.model) as string;
+  const apiFormat = normalizeApiFormat(data.apiFormat || config.apiFormat || provider.apiFormat);
 
   if (!apiKey) {
     return { success: false, error: '请先输入 API Key' };
   }
 
   try {
-    // 简单的连接测试：发送一个最小请求
+    // 按 OpenClaw 源码兼容格式发送最小探活请求
     const https = require('https');
     const http = require('http');
     const client = baseUrl.startsWith('https') ? https : http;
+    const isAnthropic = apiFormat === ANTHROPIC_API_FORMAT;
+    const requestBaseUrl = isAnthropic ? getAnthropicBaseUrl(baseUrl) : baseUrl;
+    const testUrl = buildEndpointUrl(requestBaseUrl, isAnthropic ? 'messages' : 'chat/completions');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
 
-    // 构建测试请求
-    const testUrl = new NodeURL('/chat/completions', baseUrl);
-    const testBody = JSON.stringify({
-      model: model,
-      messages: [{ role: 'user', content: 'hi' }],
-      max_tokens: 1,
-    });
+    if (isAnthropic) {
+      headers['anthropic-version'] = '2023-06-01';
+      headers['x-api-key'] = apiKey;
+    } else {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const testBody = JSON.stringify(
+      isAnthropic
+        ? {
+            model,
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 1,
+            stream: false,
+          }
+        : {
+            model,
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 1,
+            stream: false,
+          }
+    );
 
     return new Promise((resolve) => {
       const req = client.request(
         testUrl,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
+          headers,
           timeout: 15000,
         },
         (res: import('http').IncomingMessage) => {
@@ -1974,13 +2276,20 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     return { success: true, message: '服务已在运行中' };
   }
 
+  const runtimeReadiness = checkOpenClawRuntimeReadiness(config.installPath as string);
+  if (!runtimeReadiness.ready) {
+    return { success: false, error: runtimeReadiness.error || 'OpenClaw 运行环境未就绪' };
+  }
+
   try {
     gatewayStatus = 'starting';
     const providerKey = String(config.provider || 'custom') as keyof typeof PROVIDERS;
     const provider = PROVIDERS[providerKey] || PROVIDERS.custom;
     const baseUrl = (config.baseUrl || provider.baseUrl) as string;
-    const apiFormat = (config.apiFormat || provider.apiFormat || 'openai-completions') as string;
+    const apiFormat = normalizeApiFormat(config.apiFormat || provider.apiFormat || 'openai-completions');
     const model = (config.model || config.customModelId || '') as string;
+    const customEndpointId = normalizeEndpointId(config.customEndpointId) || 'custom';
+    const customModelAlias = String(config.customModelAlias || '').trim();
     const contextWindow = (config.contextWindow || 128000) as number;
     const maxTokens = (config.maxTokens || 4096) as number;
     const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
@@ -2003,7 +2312,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     if (config.provider === 'custom' || provider.type === 'proxy') {
       // 自定义/中转服务配置
       (openclawConfig.models as Record<string, unknown>).providers = {
-        custom: {
+        [customEndpointId]: {
           baseUrl: baseUrl,
           apiKey: config.apiKey,
           api: apiFormat,
@@ -2019,6 +2328,18 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
           ],
         },
       };
+
+      if (config.provider === 'custom' && customModelAlias) {
+        openclawConfig.agents = {
+          defaults: {
+            models: {
+              [`${customEndpointId}/${model}`]: {
+                alias: customModelAlias,
+              },
+            },
+          },
+        };
+      }
     } else {
       // 直连服务使用环境变量
       (openclawConfig.models as Record<string, unknown>).providers = {
@@ -2053,9 +2374,14 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
       env.OPENAI_API_KEY = String(config.apiKey || '');
     }
 
-    const pm = fs.existsSync(path.join(config.installPath as string, 'pnpm-lock.yaml')) ? 'pnpm' : 'npm';
+    const startCommand = getOpenClawStartCommand(config.installPath as string, gatewayPort);
+    logs.push({
+      time: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: `启动命令: ${startCommand}`,
+    });
 
-    const processRef = spawn(`${pm} run start`, [], {
+    const processRef = spawn(startCommand, [], {
       cwd: config.installPath as string,
       env,
       shell: true,
@@ -2093,7 +2419,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
       }
     });
 
-    return { success: true };
+    return { success: true, status: getGatewayRuntimeStatus(config) };
   } catch (e) {
     gatewayStatus = 'stopped';
     const error = e as Error;
@@ -2155,9 +2481,15 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
       return { success: false, error: resetResult.stderr || '更新失败' };
     }
 
-    const pm = checkCommand('pnpm') ? 'pnpm' : 'npm';
-    runCommand(`${pm} install`, config.installPath as string, { timeout: 300000 });
-    runCommand(`${pm} run build`, config.installPath as string, { ignoreError: true, timeout: 300000 });
+    const projectPackageManager = detectProjectPackageManager(config.installPath as string);
+    if (projectPackageManager === 'pnpm' && !checkCommand('pnpm')) {
+      return { success: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后再更新' };
+    }
+
+    const installPlan = getInstallCommand(config.installPath as string);
+    const buildPlan = getBuildCommand(config.installPath as string);
+    runCommand(installPlan.command, config.installPath as string, { timeout: 300000 });
+    runCommand(buildPlan.command, config.installPath as string, { ignoreError: true, timeout: 300000 });
 
     return { success: true, message: 'OpenClaw 更新成功！' };
   } catch (e) {
@@ -2295,10 +2627,7 @@ function createServer(config: Record<string, unknown>) {
     }
 
     if (url.pathname === '/') {
-      const status = {
-        installed: !!(config.installPath && fs.existsSync(config.installPath as string)),
-        running: gatewayStatus === 'running' || gatewayStatus === 'starting',
-      };
+      const status = getGatewayRuntimeStatus(config);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(getHTML(config, status));
       return;

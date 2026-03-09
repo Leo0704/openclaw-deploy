@@ -25,6 +25,9 @@ out/
 *.swo
 .DS_Store
 
+# Claude
+.claude/
+
 # Logs
 logs/
 *.log

@@ -39,11 +39,13 @@ jobs:
       - name: Rename binaries
         working-directory: apps/cli/bin
         run: |
-          mv index-macos-arm64 lobster-macos-arm64 || true
-          mv index-macos-x64 lobster-macos-x64 || true
-          mv index-linux-x64 lobster-linux-x64 || true
-          mv index-win-x64.exe lobster-win-x64.exe || true
-          chmod +x lobster-*
+          ls -la
+          mv lobster-assistant-macos-arm64 lobster-macos-arm64 2>/dev/null || mv index-macos-arm64 lobster-macos-arm64 2>/dev/null || true
+          mv lobster-assistant-macos-x64 lobster-macos-x64 2>/dev/null || mv index-macos-x64 lobster-macos-x64 2>/dev/null || true
+          mv lobster-assistant-linux-x64 lobster-linux-x64 2>/dev/null || mv index-linux-x64 lobster-linux-x64 2>/dev/null || true
+          mv lobster-assistant-win-x64.exe lobster-win-x64.exe 2>/dev/null || mv index-win-x64.exe lobster-win-x64.exe 2>/dev/null || true
+          ls -la
+          chmod +x lobster-* 2>/dev/null || true
 
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v1

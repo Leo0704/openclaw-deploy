@@ -6,7 +6,7 @@
 
 ## 当前版本
 
-- `1.0.20`
+- `1.0.21`
 
 ## 主要功能
 
@@ -49,16 +49,25 @@
 
 从 release 下载对应平台的安装包：
 
-- `lobster-macos-arm64`
-- `lobster-macos-x64`
+- `lobster-macos-arm64-app.zip` - macOS Apple Silicon 推荐下载
+- `lobster-macos-x64-app.zip` - macOS Intel 推荐下载
+- `lobster-macos-arm64` - macOS Apple Silicon 原始二进制
+- `lobster-macos-x64` - macOS Intel 原始二进制
 - `lobster-linux-x64`
 - `lobster-win-x64.exe`
 
-macOS / Linux:
+macOS:
+
+1. 下载 `*-app.zip`
+2. 解压得到 `Lobster Assistant.app`
+3. 双击运行
+4. 如果第一次被系统拦截，在“系统设置 > 隐私与安全性”里允许打开
+
+Linux:
 
 ```bash
-chmod +x lobster-*
-./lobster-*
+chmod +x lobster-linux-x64
+./lobster-linux-x64
 ```
 
 Windows:
@@ -234,6 +243,11 @@ CLI 打包目标：
 - `node20-linux-x64`
 - `node20-win-x64`
 
+macOS 发布同时额外生成：
+
+- `lobster-macos-arm64-app.zip`
+- `lobster-macos-x64-app.zip`
+
 输出目录：
 
 - `apps/cli/bin`
@@ -243,8 +257,8 @@ CLI 打包目标：
 发版由 Git tag 触发：
 
 ```bash
-git tag v1.0.20
-git push origin v1.0.20
+git tag v1.0.21
+git push origin v1.0.21
 ```
 
 GitHub Actions 会：

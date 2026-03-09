@@ -42,20 +42,26 @@ echo -e "${YELLOW}📦 打包二进制文件...${NC}"
 echo ""
 
 # macOS ARM64
-echo -e "  ${CYAN}[1/4]${NC} macOS ARM64 (M1/M2/M3)..."
-npx @yao-pkg/pkg dist/index.js --targets node18-macos-arm64 --output bin/lobster-macos-arm64 2>/dev/null
+echo -e "  ${CYAN}[1/6]${NC} macOS ARM64 (M1/M2/M3)..."
+npx @yao-pkg/pkg dist/index.js --targets node20-macos-arm64 --output bin/lobster-macos-arm64 2>/dev/null
 
 # macOS Intel
-echo -e "  ${CYAN}[2/4]${NC} macOS Intel..."
-npx @yao-pkg/pkg dist/index.js --targets node18-macos-x64 --output bin/lobster-macos-x64 2>/dev/null
+echo -e "  ${CYAN}[2/6]${NC} macOS Intel..."
+npx @yao-pkg/pkg dist/index.js --targets node20-macos-x64 --output bin/lobster-macos-x64 2>/dev/null
+
+# 生成 macOS .app zip
+VERSION=$(node -p "require('./package.json').version")
+echo -e "  ${CYAN}[3/6]${NC} 生成 macOS App Bundle..."
+../../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip "${VERSION}"
+../../scripts/build-macos-app.sh bin/lobster-macos-x64 bin/lobster-macos-x64-app.zip "${VERSION}"
 
 # Windows
-echo -e "  ${CYAN}[3/4]${NC} Windows x64..."
-npx @yao-pkg/pkg dist/index.js --targets node18-win-x64 --output bin/lobster-win-x64.exe 2>/dev/null
+echo -e "  ${CYAN}[4/6]${NC} Windows x64..."
+npx @yao-pkg/pkg dist/index.js --targets node20-win-x64 --output bin/lobster-win-x64.exe 2>/dev/null
 
 # Linux
-echo -e "  ${CYAN}[4/4]${NC} Linux x64..."
-npx @yao-pkg/pkg dist/index.js --targets node18-linux-x64 --output bin/lobster-linux-x64 2>/dev/null
+echo -e "  ${CYAN}[5/6]${NC} Linux x64..."
+npx @yao-pkg/pkg dist/index.js --targets node20-linux-x64 --output bin/lobster-linux-x64 2>/dev/null
 
 echo ""
 echo -e "${GREEN}✅ 打包完成！${NC}"
@@ -71,8 +77,9 @@ echo -e "${CYAN}📊 总大小: ${TOTAL}${NC}"
 echo ""
 echo -e "${CYAN}📋 用户使用流程:${NC}"
 echo ""
-echo "  1. 下载对应平台的文件"
-echo "  2. chmod +x lobster-* (macOS/Linux)"
-echo "  3. ./lobster-* start"
-echo "  4. 自动打开浏览器 → 图形界面操作"
+echo "  1. macOS 用户优先下载 *-app.zip"
+echo "  2. 解压后双击 Lobster Assistant.app"
+echo "  3. Windows 用户双击 lobster-win-x64.exe"
+echo "  4. Linux 用户 chmod +x lobster-linux-x64 后运行"
+echo "  5. 自动打开浏览器 → 图形界面操作"
 echo ""

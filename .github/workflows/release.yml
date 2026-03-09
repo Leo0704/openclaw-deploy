@@ -16,15 +16,19 @@ jobs:
           - runner: macos-latest
             target: node20-macos-arm64
             asset_name: lobster-macos-arm64
+            app_zip_name: lobster-macos-arm64-app.zip
           - runner: macos-latest
             target: node20-macos-x64
             asset_name: lobster-macos-x64
+            app_zip_name: lobster-macos-x64-app.zip
           - runner: ubuntu-latest
             target: node20-linux-x64
             asset_name: lobster-linux-x64
+            app_zip_name: ''
           - runner: windows-latest
             target: node20-win-x64
             asset_name: lobster-win-x64.exe
+            app_zip_name: ''
 
     steps:
       - name: Checkout code
@@ -33,7 +37,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.12.0'
           cache: 'npm'
           cache-dependency-path: apps/cli/package-lock.json
 
@@ -64,11 +68,30 @@ jobs:
         shell: bash
         run: chmod +x "bin/${{ matrix.asset_name }}"
 
+      - name: Build macOS app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./apps/cli/package.json').version")"
+          chmod +x scripts/build-macos-app.sh
+          scripts/build-macos-app.sh \
+            "apps/cli/bin/${{ matrix.asset_name }}" \
+            "${{ github.workspace }}/apps/cli/bin/${{ matrix.app_zip_name }}" \
+            "${VERSION}"
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
           path: apps/cli/bin/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+      - name: Upload macOS app artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app_zip_name }}
+          path: apps/cli/bin/${{ matrix.app_zip_name }}
           if-no-files-found: error
 
   release:
@@ -98,14 +121,17 @@ jobs:
             --title "Lobster Assistant ${{ github.ref_name }}" \
             --notes "## 下载
           选择适合你系统的版本：
-          - **macOS (Apple Silicon)**: \`lobster-macos-arm64\`
-          - **macOS (Intel)**: \`lobster-macos-x64\`
+          - **macOS (Apple Silicon, 推荐)**: \`lobster-macos-arm64-app.zip\`
+          - **macOS (Intel, 推荐)**: \`lobster-macos-x64-app.zip\`
+          - **macOS 原始二进制**: \`lobster-macos-arm64\` / \`lobster-macos-x64\`
           - **Linux**: \`lobster-linux-x64\`
           - **Windows**: \`lobster-win-x64.exe\`"
 
           gh release upload "${{ github.ref_name }}" \
             --repo Leo0704/lobster-releases \
             --clobber \
+            release-assets/lobster-macos-arm64-app.zip \
+            release-assets/lobster-macos-x64-app.zip \
             release-assets/lobster-macos-arm64 \
             release-assets/lobster-macos-x64 \
             release-assets/lobster-linux-x64 \

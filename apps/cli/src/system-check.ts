@@ -12,6 +12,51 @@ const { createError, ErrorType, Errors } = require('./error-utils');
 
 export const OPENCLAW_MIN_NODE_VERSION = '22.12.0';
 
+function getPreferredPathEntries(): string[] {
+  const currentPath = String(process.env.PATH || '');
+  const entries = currentPath.split(path.delimiter).filter(Boolean);
+  const preferred = os.platform() === 'darwin'
+    ? [
+        '/opt/homebrew/bin',
+        '/opt/homebrew/sbin',
+        '/usr/local/bin',
+        '/usr/local/sbin',
+        '/opt/local/bin',
+        '/opt/local/sbin',
+      ]
+    : os.platform() === 'win32'
+      ? [
+          path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'nodejs'),
+          path.join(process.env['AppData'] || '', 'npm'),
+        ].filter(Boolean)
+      : [];
+
+  return Array.from(new Set([...preferred, ...entries]));
+}
+
+export function getCommandLookupEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PATH: getPreferredPathEntries().join(path.delimiter),
+  };
+}
+
+function resolveCommandPath(cmd: string): string | null {
+  try {
+    const env = getCommandLookupEnv();
+    const lookup = os.platform() === 'win32' ? 'where' : 'which';
+    const output = execSync(`${lookup} ${cmd}`, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf-8',
+      env,
+    }).trim();
+    const first = output.split(/\r?\n/).find(Boolean);
+    return first || null;
+  } catch {
+    return null;
+  }
+}
+
 // ============================================
 // 类型定义
 // ============================================
@@ -283,7 +328,22 @@ export async function findAvailablePort(startPort: number, maxAttempts: number =
  * 检查 Node.js 版本
  */
 export function checkNodeVersion(minVersion: string = OPENCLAW_MIN_NODE_VERSION): NodeVersionResult {
-  const current = process.versions.node;
+  const nodePath = resolveCommandPath('node');
+  const current = (() => {
+    if (nodePath) {
+      try {
+        const output = execSync(`"${nodePath}" --version`, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          encoding: 'utf-8',
+          env: getCommandLookupEnv(),
+        }).trim();
+        return output.replace(/^v/, '');
+      } catch {
+        // fall through
+      }
+    }
+    return process.versions.node;
+  })();
 
   const parseVersion = (v: string): number[] => {
     return v.split('.').map((part) => parseInt(part, 10));
@@ -322,24 +382,22 @@ export function checkNodeVersion(minVersion: string = OPENCLAW_MIN_NODE_VERSION)
  * 检查命令是否存在
  */
 function checkCommand(cmd: string): boolean {
-  try {
-    execSync(os.platform() === 'win32' ? `where ${cmd}` : `which ${cmd}`, {
-      stdio: 'pipe',
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return !!resolveCommandPath(cmd);
 }
 
 /**
  * 获取命令版本
  */
 function getCommandVersion(cmd: string): string | null {
+  const commandPath = resolveCommandPath(cmd);
+  if (!commandPath) {
+    return null;
+  }
   try {
-    const output = execSync(`${cmd} --version`, {
+    const output = execSync(`"${commandPath}" --version`, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: getCommandLookupEnv(),
     }).trim();
     return output.split('\n')[0];
   } catch {

@@ -6,7 +6,7 @@
 
 ## 当前版本
 
-- `1.0.21`
+- `1.0.22`
 
 ## 主要功能
 
@@ -257,8 +257,8 @@ macOS 发布同时额外生成：
 发版由 Git tag 触发：
 
 ```bash
-git tag v1.0.21
-git push origin v1.0.21
+git tag v1.0.22
+git push origin v1.0.22
 ```
 
 GitHub Actions 会：

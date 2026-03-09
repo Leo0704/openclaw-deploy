@@ -42,9 +42,10 @@ const {
   checkDependencies,
   performHealthChecks,
   OPENCLAW_MIN_NODE_VERSION,
+  getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.21';
+const VERSION = '1.0.22';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -1438,6 +1439,7 @@ function runCommand(
     try {
       const result = execSync(cmd, {
         cwd,
+        env: getCommandLookupEnv(),
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout,
@@ -1490,7 +1492,7 @@ function runCommandArgs(
   try {
     const result = execFileSync(file, args, {
       cwd,
-      env: env || process.env,
+      env: env || getCommandLookupEnv(),
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
@@ -1537,10 +1539,11 @@ function appendLog(
 
 function checkCommand(cmd: string): boolean {
   try {
+    const env = getCommandLookupEnv();
     if (os.platform() === 'win32') {
-      execFileSync('where', [cmd], { stdio: 'pipe' });
+      execFileSync('where', [cmd], { stdio: 'pipe', env });
     } else {
-      execFileSync('which', [cmd], { stdio: 'pipe' });
+      execFileSync('which', [cmd], { stdio: 'pipe', env });
     }
     return true;
   } catch {
@@ -1559,7 +1562,7 @@ function parseCommandForSpawn(command: string): { file: string; args: string[] }
 
 function getManagedOpenClawEnv(config: Record<string, unknown>): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    ...getCommandLookupEnv(),
     OPENCLAW_CONFIG_PATH: getManagedOpenClawConfigPath(config),
   };
 }

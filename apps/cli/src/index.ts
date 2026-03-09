@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.16';
+const VERSION = '1.0.17';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -3181,7 +3181,27 @@ async function main() {
   }, ONE_DAY);
 
   const server = createServer(config);
-  const port = process.env.LOBSTER_PORT || DEFAULT_WEB_PORT;
+  const requestedPort = Number(process.env.LOBSTER_PORT || DEFAULT_WEB_PORT);
+  let port = requestedPort;
+  const requestedPortAvailability = await checkPortAvailability(requestedPort);
+
+  if (!requestedPortAvailability.available) {
+    const fallbackPort = await findAvailablePort(requestedPort + 1, 20);
+    if (!fallbackPort) {
+      throw new Error(requestedPortAvailability.message || `Web 控制台端口 ${requestedPort} 已被占用`);
+    }
+
+    console.log(`[Web] 端口 ${requestedPort} 已被占用，自动切换到 ${fallbackPort}`);
+    port = fallbackPort;
+  }
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Web 控制台端口 ${port} 已被占用，请关闭旧进程或设置新的 LOBSTER_PORT`);
+      return;
+    }
+    console.error('[Web 服务错误]', err.message);
+  });
 
   server.listen(port, () => {
     console.log('');

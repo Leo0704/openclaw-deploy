@@ -6,8 +6,25 @@ on:
       - 'v*'
 
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
+  build-binary:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: node18-macos-arm64
+            asset_name: lobster-macos-arm64
+          - runner: macos-13
+            target: node18-macos-x64
+            asset_name: lobster-macos-x64
+          - runner: ubuntu-latest
+            target: node18-linux-x64
+            asset_name: lobster-linux-x64
+          - runner: windows-latest
+            target: node18-win-x64
+            asset_name: lobster-win-x64.exe
 
     steps:
       - name: Checkout code
@@ -17,36 +34,63 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/cli/package-lock.json
 
       - name: Install dependencies
         working-directory: apps/cli
-        run: npm install
+        run: npm ci
 
       - name: Build TypeScript
         working-directory: apps/cli
         run: npm run build
 
-      - name: Build binaries with pkg
+      - name: Prepare bin directory
         working-directory: apps/cli
-        run: |
-          npm install -g pkg
-          npx pkg . --targets node18-macos-arm64,node18-macos-x64,node18-linux-x64,node18-win-x64 --output-path bin
+        shell: bash
+        run: rm -rf bin && mkdir -p bin
 
-      - name: Rename binaries
-        working-directory: apps/cli/bin
-        run: |
-          mv lobster-assistant-macos-arm64 lobster-macos-arm64 2>/dev/null || mv index-macos-arm64 lobster-macos-arm64 2>/dev/null || true
-          mv lobster-assistant-macos-x64 lobster-macos-x64 2>/dev/null || mv index-macos-x64 lobster-macos-x64 2>/dev/null || true
-          mv lobster-assistant-linux-x64 lobster-linux-x64 2>/dev/null || mv index-linux-x64 lobster-linux-x64 2>/dev/null || true
-          mv lobster-assistant-win-x64.exe lobster-win-x64.exe 2>/dev/null || mv index-win-x64.exe lobster-win-x64.exe 2>/dev/null || true
-          chmod +x lobster-* 2>/dev/null || true
+      - name: Build binary with pkg
+        working-directory: apps/cli
+        shell: bash
+        run: npx @yao-pkg/pkg dist/index.js --targets "${{ matrix.target }}" --output "bin/${{ matrix.asset_name }}"
 
-      - name: Create Release with GitHub CLI
+      - name: Ensure executable bit on Unix binaries
+        if: runner.os != 'Windows'
+        working-directory: apps/cli
+        shell: bash
+        run: chmod +x "bin/${{ matrix.asset_name }}"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: apps/cli/bin/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: build-binary
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        shell: bash
+        run: ls -lah release-assets
+
+      - name: Create or update release in lobster-releases
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        shell: bash
         run: |
-          cd apps/cli/bin
-          gh release create ${{ github.ref_name }} \
+          gh release view "${{ github.ref_name }}" --repo Leo0704/lobster-releases >/dev/null 2>&1 || \
+          gh release create "${{ github.ref_name }}" \
             --repo Leo0704/lobster-releases \
             --title "Lobster Assistant ${{ github.ref_name }}" \
             --notes "## 下载
@@ -54,8 +98,12 @@ jobs:
           - **macOS (Apple Silicon)**: \`lobster-macos-arm64\`
           - **macOS (Intel)**: \`lobster-macos-x64\`
           - **Linux**: \`lobster-linux-x64\`
-          - **Windows**: \`lobster-win-x64.exe\`" \
-            lobster-macos-arm64 \
-            lobster-macos-x64 \
-            lobster-linux-x64 \
-            lobster-win-x64.exe
+          - **Windows**: \`lobster-win-x64.exe\`"
+
+          gh release upload "${{ github.ref_name }}" \
+            --repo Leo0704/lobster-releases \
+            --clobber \
+            release-assets/lobster-macos-arm64 \
+            release-assets/lobster-macos-x64 \
+            release-assets/lobster-linux-x64 \
+            release-assets/lobster-win-x64.exe

@@ -76,16 +76,26 @@ export function checkDiskSpace(requiredBytes: number, checkPath: string): DiskSp
     let freeBytes: number;
 
     if (os.platform() === 'win32') {
-      // Windows
-      const output = execSync(`wmic logicaldisk where "DeviceID='${targetPath.charAt(0)}:'" get FreeSpace /format:csv`, {
-        encoding: 'utf-8',
-      });
-      const lines = output.trim().split('\n');
-      const dataLine = lines.find((line: string) => line.includes(','));
-      if (dataLine) {
-        freeBytes = parseInt(dataLine.split(',')[1], 10);
-      } else {
-        // 回退方案
+      const driveLetter = path.resolve(targetPath).charAt(0).toUpperCase();
+      try {
+        const output = execSync(`wmic logicaldisk where "DeviceID='${driveLetter}:'" get FreeSpace /value`, {
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        const match = output.match(/FreeSpace=(\d+)/);
+        freeBytes = match ? parseInt(match[1], 10) : Number.NaN;
+      } catch {
+        const output = execSync(
+          `powershell -NoProfile -Command "(Get-CimInstance Win32_LogicalDisk -Filter \\"DeviceID='${driveLetter}:'\\").FreeSpace"`,
+          {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+          }
+        );
+        freeBytes = parseInt(output.trim(), 10);
+      }
+
+      if (!Number.isFinite(freeBytes) || freeBytes < 0) {
         freeBytes = Number.MAX_SAFE_INTEGER;
       }
     } else {
@@ -334,12 +344,12 @@ export async function performHealthChecks(config: {
   checks.push({
     name: 'Git',
     passed: gitAvailable,
-    message: gitAvailable ? 'Git 已安装' : '未找到 Git',
-    severity: 'critical',
+    message: gitAvailable ? 'Git 已安装' : '未找到 Git，部署时将尝试自动安装',
+    severity: gitAvailable ? 'info' : 'warning',
     details: { version: getCommandVersion('git') },
   });
   if (!gitAvailable) {
-    errors.push('未找到 Git，请先安装 Git: https://git-scm.com');
+    warnings.push('未找到 Git，部署时会尝试自动安装');
   }
 
   // 3. npm/pnpm 检查

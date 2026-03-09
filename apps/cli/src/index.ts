@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.14';
+const VERSION = '1.0.15';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -1667,6 +1667,40 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       }
 
       $('main-card').innerHTML = \`
+        <h2 class="card-title">🩺 部署前检查</h2>
+        <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">正在执行一次性预检...</div></div>
+      \`;
+
+      const health = await api('health-check', {
+        installPath,
+        gatewayPort,
+      });
+
+      const precheckLogsEl = $('deploy-logs');
+      if (!health.success) {
+        precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 预检失败: ' + (health.error || '未知错误') + '</div>';
+        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回</button></div>';
+        return;
+      }
+
+      const checkLines = (health.checks || []).map(check => {
+        const level = check.passed ? 'success' : (check.severity === 'warning' ? 'warning' : 'error');
+        const icon = check.passed ? '✓' : (check.severity === 'warning' ? '!' : '✗');
+        return '<div class="log-line log-' + level + '">[' + check.name + '] ' + icon + ' ' + check.message + '</div>';
+      }).join('');
+      precheckLogsEl.innerHTML = checkLines || '<div class="log-line log-info">未返回检查结果</div>';
+
+      if (health.errors && health.errors.length > 0) {
+        precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 发现阻塞问题，已停止部署。</div>';
+        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回修正</button></div>';
+        return;
+      }
+
+      if (health.warnings && health.warnings.length > 0) {
+        precheckLogsEl.innerHTML += '<div class="log-line log-warning" style="margin-top:16px">⚠️ 存在警告项，部署会继续。</div>';
+      }
+
+      $('main-card').innerHTML = \`
         <h2 class="card-title">📦 部署中...</h2>
         <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
       \`;
@@ -2178,7 +2212,21 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
       return { success: false, error: '请选择模型', logs };
     }
 
-    // 2. 检查依赖
+    // 2. 一次性预检
+    addLog('执行部署前预检...');
+    const precheck = await performHealthChecks({
+      installPath,
+      gatewayPort,
+      requiredDiskSpace: 500 * 1024 * 1024,
+    });
+    precheck.checks.forEach((check) => {
+      addLog(`[预检] ${check.name}: ${check.message}`, check.passed ? 'success' : check.severity === 'warning' ? 'warning' : 'error');
+    });
+    if (precheck.errors.length > 0) {
+      return { success: false, error: precheck.errors[0], logs };
+    }
+
+    // 3. 检查依赖并自动补齐可恢复项
     addLog('检查系统依赖...');
     const deps = checkDependencies();
     if (!deps.node.valid) {
@@ -2202,25 +2250,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     let pnpmAvailable = deps.pnpm;
     addLog(`依赖检查通过 ✓ (Node: v${deps.node.version}, Git: ✓, npm: ✓, pnpm: ${pnpmAvailable ? '✓' : '✗'})`, 'success');
 
-    // 3. 检查磁盘空间
-    addLog('检查磁盘空间...');
-    const diskCheck = checkDiskSpace(500 * 1024 * 1024, installPath); // 500MB
-    if (!diskCheck.available) {
-      addLog(`错误: ${diskCheck.message}`, 'error');
-      return { success: false, error: diskCheck.message, logs };
-    }
-    addLog(`磁盘空间充足 (可用: ${Math.round(diskCheck.freeBytes / 1024 / 1024)}MB) ✓`, 'success');
-
-    // 4. 检查端口
-    addLog(`检查端口 ${gatewayPort}...`);
-    const portResult = await checkPortAvailability(gatewayPort);
-    if (!portResult.available) {
-      addLog(`错误: ${portResult.message}`, 'error');
-      return { success: false, error: portResult.message || '端口已被占用', logs };
-    }
-    addLog('端口可用 ✓', 'success');
-
-    // 5. 保存配置
+    // 4. 保存配置
     config.provider = data.provider || 'anthropic';
     config.model = data.model;
     config.apiKey = data.apiKey;
@@ -2233,7 +2263,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
     if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
 
-    // 6. 克隆/更新仓库（支持镜像源自动切换）
+    // 5. 克隆/更新仓库（支持镜像源自动切换）
     if (!fs.existsSync(installPath)) {
       let cloneSuccess = false;
 
@@ -2290,7 +2320,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
       pnpmAvailable = true;
     }
 
-    // 7. 安装依赖
+    // 6. 安装依赖
     const installPlan = getInstallCommand(installPath);
     addLog(`安装依赖 (${installPlan.pm})...`);
     const installResult = runCommand(installPlan.command, installPath, {
@@ -2303,7 +2333,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     }
     addLog('依赖安装成功 ✓', 'success');
 
-    // 8. 构建
+    // 7. 构建
     addLog('构建项目...');
     const buildPlan = getBuildCommand(installPath);
     const buildResult = runCommand(buildPlan.command, installPath, { ignoreError: true, timeout: 300000 });
@@ -2313,7 +2343,7 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
       addLog('构建跳过（可能无构建脚本）', 'warning');
     }
 
-    // 9. 保存最终配置
+    // 8. 保存最终配置
     config.installPath = installPath;
     saveConfig(config);
 

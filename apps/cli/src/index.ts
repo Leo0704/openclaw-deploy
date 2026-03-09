@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.11';
+const VERSION = '1.0.12';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const SOURCE_REPO_PATH = 'openclaw/openclaw';
@@ -529,6 +529,84 @@ function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; e
   }
 
   return { ready: true };
+}
+
+function getDependencyInstallPlan(name: 'git' | 'pnpm'): { command: string; manual: string } | null {
+  if (name === 'pnpm') {
+    return {
+      command: 'npm install -g pnpm',
+      manual: '请先执行 `npm install -g pnpm` 后重试',
+    };
+  }
+
+  switch (os.platform()) {
+    case 'win32':
+      if (checkCommand('winget')) {
+        return {
+          command: 'winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements',
+          manual: '请先安装 Git for Windows: https://git-scm.com/download/win',
+        };
+      }
+      return { command: '', manual: '请先安装 Git for Windows: https://git-scm.com/download/win' };
+    case 'darwin':
+      if (checkCommand('brew')) {
+        return {
+          command: 'brew install git',
+          manual: '请先执行 `brew install git`，或安装 Xcode Command Line Tools',
+        };
+      }
+      return {
+        command: 'xcode-select --install',
+        manual: '请先安装 Xcode Command Line Tools，或执行 `brew install git`',
+      };
+    default:
+      if (checkCommand('apt-get')) {
+        return { command: 'sudo apt-get update && sudo apt-get install -y git', manual: '请先执行 `sudo apt-get install -y git` 后重试' };
+      }
+      if (checkCommand('dnf')) {
+        return { command: 'sudo dnf install -y git', manual: '请先执行 `sudo dnf install -y git` 后重试' };
+      }
+      if (checkCommand('yum')) {
+        return { command: 'sudo yum install -y git', manual: '请先执行 `sudo yum install -y git` 后重试' };
+      }
+      if (checkCommand('pacman')) {
+        return { command: 'sudo pacman -Sy --noconfirm git', manual: '请先执行 `sudo pacman -Sy git` 后重试' };
+      }
+      return { command: '', manual: '请先手动安装 Git 后重试' };
+  }
+}
+
+function ensureDependencyInstalled(
+  name: 'git' | 'pnpm',
+  addLog: (msg: string, level?: 'info' | 'success' | 'error' | 'warning') => void
+): { success: boolean; manual?: string } {
+  if (checkCommand(name)) {
+    return { success: true };
+  }
+
+  const plan = getDependencyInstallPlan(name);
+  if (!plan) {
+    return { success: false };
+  }
+
+  addLog(`未检测到 ${name}，尝试自动安装...`, 'warning');
+  if (!plan.command) {
+    addLog(`${name} 无法自动安装`, 'error');
+    return { success: false, manual: plan.manual };
+  }
+
+  const installResult = runCommand(plan.command, process.cwd(), {
+    timeout: 900000,
+    ignoreError: true,
+  });
+
+  if (!installResult.success || !checkCommand(name)) {
+    addLog(`${name} 自动安装失败`, 'error');
+    return { success: false, manual: plan.manual };
+  }
+
+  addLog(`${name} 自动安装成功 ✓`, 'success');
+  return { success: true };
 }
 
 // ============================================
@@ -1990,14 +2068,21 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
       return { success: false, error: 'Node.js 版本过低，请升级到 v18 或更高版本', logs };
     }
     if (!deps.git) {
-      addLog('错误: 未找到 Git', 'error');
-      return { success: false, error: '未找到 Git，请先安装 Git: https://git-scm.com', logs };
+      const gitInstall = ensureDependencyInstalled('git', addLog);
+      if (!gitInstall.success) {
+        return {
+          success: false,
+          error: gitInstall.manual || '未找到 Git，请先安装 Git 后重试',
+          logs,
+        };
+      }
     }
     if (!deps.npm) {
       addLog('错误: 未找到 npm', 'error');
       return { success: false, error: '未找到 npm，请先安装 Node.js: https://nodejs.org', logs };
     }
-    addLog(`依赖检查通过 ✓ (Node: v${deps.node.version}, Git: ✓, npm: ✓, pnpm: ${deps.pnpm ? '✓' : '✗'})`, 'success');
+    let pnpmAvailable = deps.pnpm;
+    addLog(`依赖检查通过 ✓ (Node: v${deps.node.version}, Git: ✓, npm: ✓, pnpm: ${pnpmAvailable ? '✓' : '✗'})`, 'success');
 
     // 3. 检查磁盘空间
     addLog('检查磁盘空间...');
@@ -2075,13 +2160,16 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     }
 
     const projectPackageManager = detectProjectPackageManager(installPath);
-    if (projectPackageManager === 'pnpm' && !deps.pnpm) {
-      addLog('错误: 当前 OpenClaw 源码要求使用 pnpm，但系统未安装 pnpm', 'error');
-      return {
-        success: false,
-        error: '当前 OpenClaw 源码要求使用 pnpm。请先执行 `npm install -g pnpm` 或启用 Corepack 后重试。',
-        logs,
-      };
+    if (projectPackageManager === 'pnpm' && !pnpmAvailable) {
+      const pnpmInstall = ensureDependencyInstalled('pnpm', addLog);
+      if (!pnpmInstall.success) {
+        return {
+          success: false,
+          error: pnpmInstall.manual || '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后重试',
+          logs,
+        };
+      }
+      pnpmAvailable = true;
     }
 
     // 7. 安装依赖

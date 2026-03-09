@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.12';
+const VERSION = '1.0.13';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const SOURCE_REPO_PATH = 'openclaw/openclaw';
@@ -914,22 +914,10 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     #toast.show { opacity: 1; }
     #toast.success { background: #10B981; }
     #toast.error { background: #EF4444; }
-    .provider-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; }
-    @media (max-width: 500px) { .provider-grid { grid-template-columns: 1fr; } }
-    .provider-card { padding: 16px; border: 2px solid #E5E7EB; border-radius: 12px; cursor: pointer; transition: all 0.2s; text-align: center; }
-    .provider-card:hover { border-color: #FF6B35; background: #FFF7ED; }
-    .provider-card.selected { border-color: #FF6B35; background: #FFF7ED; }
-    .provider-card.small { padding: 12px; }
-    .provider-card.small .provider-icon { font-size: 18px; }
-    .provider-card.small .provider-name { font-size: 12px; }
-    .provider-icon { font-size: 24px; margin-bottom: 8px; }
-    .provider-name { font-weight: 600; color: #1F2937; }
-    .model-list { margin-top: 12px; }
-    .model-item { padding: 10px 14px; border: 1px solid #E5E7EB; border-radius: 6px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; }
-    .model-item:hover { border-color: #FF6B35; }
-    .model-item.selected { border-color: #FF6B35; background: #FFF7ED; }
-    .model-name { font-weight: 500; color: #1F2937; }
-    .model-tag { font-size: 11px; padding: 2px 6px; background: #10B981; color: white; border-radius: 4px; margin-left: 8px; }
+    .wizard-steps { display: grid; gap: 16px; margin-bottom: 20px; }
+    .wizard-step { padding: 16px; border: 1px solid #E5E7EB; border-radius: 12px; background: #F9FAFB; }
+    .wizard-step-title { font-size: 14px; font-weight: 700; color: #1F2937; margin-bottom: 10px; }
+    .wizard-step-desc { font-size: 12px; color: #6B7280; margin-bottom: 10px; line-height: 1.5; }
     .section { margin-bottom: 24px; }
     .section-title { font-size: 14px; font-weight: 600; color: #6B7280; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
     .divider { height: 1px; background: #E5E7EB; margin: 20px 0; }
@@ -997,9 +985,11 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
   <div id="toast"></div>
   <script>
     const PROVIDERS = ${JSON.stringify(PROVIDERS)};
-    // 默认选择第一个推荐模型
+    // 默认选择当前 provider 的默认模型；custom 不展示预设推荐模型
     const defaultProvider = '${config.provider || 'anthropic'}';
-    const defaultModel = '${config.model}' || (PROVIDERS[defaultProvider]?.models.find(m => m.recommended)?.id || PROVIDERS[defaultProvider]?.models[0]?.id || '');
+    const defaultModel = defaultProvider === 'custom'
+      ? ('${config.customModelId || config.model || ''}')
+      : ('${config.model}' || (PROVIDERS[defaultProvider]?.models.find(m => m.recommended)?.id || PROVIDERS[defaultProvider]?.models[0]?.id || ''));
     const state = {
       config: ${JSON.stringify(config)},
       status: ${JSON.stringify(status)},
@@ -1097,43 +1087,81 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
       // 未部署
       if (!s.installed) {
+        const deployProvider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
+        const deployIsCustom = state.selectedProvider === 'custom';
         card.innerHTML = \`
           <h2 class="card-title">📦 部署 OpenClaw</h2>
-          <div class="note note-info">点击开始部署，将自动下载并安装 OpenClaw 到您的电脑</div>
+          <div class="note note-info">部署阶段也按顺序填写模型接入信息，不再使用推荐模型卡片。</div>
 
-          <div class="section">
-            <div class="section-title">选择 AI 提供商</div>
-            <div class="provider-grid" id="providers">
-              \${Object.entries(PROVIDERS).map(([key, p]) => \`
-                <div class="provider-card \${state.selectedProvider === key ? 'selected' : ''}" onclick="selectProvider('\${key}')">
-                  <div class="provider-icon">\${p.icon}</div>
-                  <div class="provider-name">\${p.name}</div>
+          <div class="wizard-steps">
+            <div class="wizard-step">
+              <div class="wizard-step-title">第 1 步：选择 Provider</div>
+              <div class="wizard-step-desc">先确定是使用 OpenClaw 预设 provider，还是走 custom onboarding。</div>
+              <select id="deployProvider" class="form-select" onchange="selectProvider(this.value)">
+                \${renderProviderOptions()}
+              </select>
+            </div>
+
+            <div class="wizard-step">
+              <div class="wizard-step-title">第 2 步：填写模型与认证</div>
+              \${deployIsCustom ? \`
+                <div class="wizard-step-desc">custom 不提供推荐模型。请按 OpenClaw 官方 custom onboarding 的顺序填写。</div>
+                <div class="form-group">
+                  <label class="form-label">API Key</label>
+                  <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
                 </div>
-              \`).join('')}
+                <div class="form-group">
+                  <label class="form-label">Base URL</label>
+                  <input type="text" id="deployBaseUrl" class="form-input" value="\${c.baseUrl || ''}" placeholder="例如: https://api.example.com/v1">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Endpoint compatibility</label>
+                  <select id="deployApiFormat" class="form-select">
+                    <option value="openai-completions" \${normalizeApiFormat(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI-compatible</option>
+                    <option value="${ANTHROPIC_API_FORMAT}" \${normalizeApiFormat(c.apiFormat) === '${ANTHROPIC_API_FORMAT}' ? 'selected' : ''}>Anthropic-compatible</option>
+                    <option value="unknown">Unknown (自动探测)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Model ID</label>
+                  <input type="text" id="deployCustomModelId" class="form-input" value="\${c.customModelId || c.model || ''}" placeholder="例如: glm-5">
+                </div>
+              \` : \`
+                <div class="wizard-step-desc">预设 provider 只保留 provider 与 model 的源码语义，不再展示推荐卡片。</div>
+                <div class="form-group">
+                  <label class="form-label">Model</label>
+                  <select id="deployModel" class="form-select" onchange="selectModel(this.value)">
+                    \${renderModelOptions(state.selectedProvider, state.selectedModel)}
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">API Key</label>
+                  <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
+                </div>
+              \`}
             </div>
-          </div>
 
-          <div class="section" id="models-section">
-            \${renderModels()}
+            <div class="wizard-step">
+              <div class="wizard-step-title">第 3 步：部署位置与端口</div>
+              <div class="form-group">
+                <label class="form-label">安装路径</label>
+                <input type="text" id="path" class="form-input" value="\${c.installPath || '${path.join(os.homedir(), 'openclaw')}'}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">端口号</label>
+                <input type="number" id="port" class="form-input" value="\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}">
+              </div>
+            </div>
           </div>
 
           <div class="section">
             <div class="form-group">
-              <label class="form-label">API Key</label>
-              <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="section">
-            <div class="form-group">
-              <label class="form-label">安装路径</label>
-              <input type="text" id="path" class="form-input" value="\${c.installPath || '${path.join(os.homedir(), 'openclaw')}'}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">端口号</label>
-              <input type="number" id="port" class="form-input" value="\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}">
+              <label class="form-label">说明</label>
+              <div class="note note-info" style="margin-bottom:0">
+                \${deployIsCustom
+                  ? 'custom provider 会在部署后继续沿用 OpenClaw 的 custom provider 配置语义。'
+                  : '预设 provider 仅作为快捷模板，最终仍由 OpenClaw 网关读取生成的配置。'}
+              </div>
             </div>
           </div>
 
@@ -1253,20 +1281,19 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       if (s.running && (state.currentTab === 'status' || !state.currentTab)) pollLogs();
     }
 
-    function renderModels() {
-      const provider = PROVIDERS[state.selectedProvider];
-      if (!provider) return '';
-      return \`
-        <div class="section-title">选择模型</div>
-        <div class="model-list">
-          \${provider.models.map(m => \`
-            <div class="model-item \${state.selectedModel === m.id ? 'selected' : ''}" onclick="selectModel('\${m.id}')">
-              <span class="model-name">\${m.name}</span>
-              \${m.recommended ? '<span class="model-tag">推荐</span>' : ''}
-            </div>
-          \`).join('')}
-        </div>
-      \`;
+    function renderProviderOptions() {
+      return Object.entries(PROVIDERS).map(([key, provider]) => {
+        return '<option value="' + key + '"' + (state.selectedProvider === key ? ' selected' : '') + '>' + provider.name + '</option>';
+      }).join('');
+    }
+
+    function renderModelOptions(providerKey, selectedValue) {
+      const provider = PROVIDERS[providerKey];
+      if (!provider || !provider.models || provider.models.length === 0) return '';
+      return provider.models.map((model) => {
+        const selected = selectedValue === model.id ? ' selected' : '';
+        return '<option value="' + model.id + '"' + selected + '>' + model.name + '</option>';
+      }).join('');
     }
 
     function selectProvider(key) {
@@ -1274,8 +1301,12 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       resetCustomWizard();
       const provider = PROVIDERS[key];
       if (provider && provider.models.length > 0) {
-        const recommended = provider.models.find(m => m.recommended);
-        state.selectedModel = recommended ? recommended.id : provider.models[0].id;
+        if (key === 'custom') {
+          state.selectedModel = state.config.customModelId || state.config.model || '';
+        } else {
+          const recommended = provider.models.find(m => m.recommended);
+          state.selectedModel = recommended ? recommended.id : provider.models[0].id;
+        }
       }
       render();
     }
@@ -1521,22 +1552,32 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const installPath = $('path').value;
       const gatewayPort = parseInt($('port').value);
       const apiKey = $('apiKey').value;
+      const isCustom = state.selectedProvider === 'custom';
 
       if (!apiKey) return toast('请输入 API Key', 'error');
-      if (!state.selectedModel) return toast('请选择模型', 'error');
+      if (!isCustom && !state.selectedModel) return toast('请选择模型', 'error');
+
+      const payload = {
+        installPath,
+        gatewayPort,
+        apiKey,
+        provider: state.selectedProvider,
+        model: isCustom ? (($('deployCustomModelId')?.value || '').trim()) : state.selectedModel,
+      };
+
+      if (isCustom) {
+        if (!payload.model) return toast('请输入 Model ID', 'error');
+        payload.baseUrl = $('deployBaseUrl')?.value || '';
+        payload.apiFormat = $('deployApiFormat')?.value || 'openai-completions';
+        payload.customModelId = payload.model;
+      }
 
       $('main-card').innerHTML = \`
         <h2 class="card-title">📦 部署中...</h2>
         <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
       \`;
 
-      const res = await api('deploy', {
-        installPath,
-        gatewayPort,
-        apiKey,
-        provider: state.selectedProvider,
-        model: state.selectedModel
-      });
+      const res = await api('deploy', payload);
 
       const logsEl = $('deploy-logs');
       if (res.logs) {
@@ -1633,127 +1674,84 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const currentProvider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
       const isCustom = state.selectedProvider === 'custom';
 
-      // 分组：直连服务、国内中转、自定义
-      const directProviders = Object.entries(PROVIDERS).filter(([k, p]) => p.type === 'direct' || p.type === 'proxy' && k === 'openrouter');
-      const proxyProviders = Object.entries(PROVIDERS).filter(([k, p]) => p.type === 'proxy' && k !== 'openrouter');
-      const customProviders = Object.entries(PROVIDERS).filter(([k, p]) => p.type === 'custom');
-
       card.innerHTML = \`
         <h2 class="card-title">⚙️ API 配置</h2>
-
-        <!-- 直连服务 -->
-        <div class="section">
-          <div class="section-title">🌐 官方直连（需科学上网）</div>
-          <div class="provider-grid" id="providers-direct">
-            \${directProviders.map(([key, p]) => \`
-              <div class="provider-card \${state.selectedProvider === key ? 'selected' : ''}" onclick="selectProvider('\${key}')">
-                <div class="provider-icon">\${p.icon}</div>
-                <div class="provider-name">\${p.name}</div>
-              </div>
-            \`).join('')}
-          </div>
-        </div>
-
-        <!-- 国内中转 -->
-        <div class="section">
-          <div class="section-title">🇨🇳 国内服务（无需翻墙）</div>
-          <div class="provider-grid" id="providers-proxy">
-            \${proxyProviders.map(([key, p]) => \`
-              <div class="provider-card \${state.selectedProvider === key ? 'selected' : ''}" onclick="selectProvider('\${key}')">
-                <div class="provider-icon">\${p.icon}</div>
-                <div class="provider-name">\${p.name}</div>
-              </div>
-            \`).join('')}
-          </div>
-        </div>
-
-        <!-- 自定义 -->
-        <div class="section">
-          <div class="section-title">⚙️ 自定义配置</div>
-          <div class="provider-grid" id="providers-custom">
-            \${customProviders.map(([key, p]) => \`
-              <div class="provider-card \${state.selectedProvider === key ? 'selected' : ''}" onclick="selectProvider('\${key}')">
-                <div class="provider-icon">\${p.icon}</div>
-                <div class="provider-name">\${p.name}</div>
-              </div>
-            \`).join('')}
-          </div>
-        </div>
-
-        \${currentProvider.description ? \`<div class="note note-info" style="margin-bottom:16px">\${currentProvider.description}</div>\` : ''}
-
-        <!-- 模型选择 -->
-        <div class="section" id="models-section">
-          \${renderModels()}
-        </div>
-
-        <!-- API 配置 -->
-        <div class="section">
-          <div class="form-group">
-            <label class="form-label">API Key</label>
-            <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key" \${isCustom ? 'oninput="resetCustomWizard()"' : ''}>
-          </div>
-
-          \${isCustom || currentProvider.type === 'proxy' ? \`
-          <div class="form-group">
-            <label class="form-label">API 地址 (Base URL)</label>
-            <input type="text" id="baseUrl" class="form-input" value="\${c.baseUrl || currentProvider.baseUrl || ''}" placeholder="例如: https://api.example.com/v1" \${isCustom ? 'oninput="syncCustomEndpointId(); resetCustomWizard()"' : ''}>
-            <small style="color:#6B7280;font-size:12px">\${isCustom ? '第 1 步：先填写 OpenClaw 里要用的 Endpoint Base URL' : '留空使用默认地址'}</small>
-          </div>
-          \` : ''}
-
-          \${isCustom ? \`
-          <div class="note note-info" style="margin: 12px 0 16px 0;">
-            自定义 API 按 OpenClaw 官方引导式流程配置：先填地址和密钥，再选择兼容类型与模型，验证通过后再保存。
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">第 2 步：Endpoint compatibility</label>
-            <select id="apiFormat" class="form-select" onchange="resetCustomWizard()">
-              <option value="openai-completions" \${normalizeApiFormat(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI-compatible</option>
-              <option value="${ANTHROPIC_API_FORMAT}" \${normalizeApiFormat(c.apiFormat) === '${ANTHROPIC_API_FORMAT}' ? 'selected' : ''}>Anthropic-compatible</option>
-              <option value="unknown">Unknown (自动探测)</option>
+        <div class="wizard-steps">
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 1 步：选择 Provider</div>
+            <div class="wizard-step-desc">先确定是使用 OpenClaw 预设 provider，还是进入 custom provider onboarding。</div>
+            <select id="configProvider" class="form-select" onchange="selectProvider(this.value)">
+              \${renderProviderOptions()}
             </select>
           </div>
 
-          <div class="form-group">
-            <label class="form-label">第 3 步：Model ID</label>
-            <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || state.selectedModel || ''}" placeholder="例如: glm-5, gpt-4o, claude-sonnet-4" oninput="resetCustomWizard()">
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 2 步：提供凭证</div>
+            <div class="wizard-step-desc">\${isCustom ? 'custom provider 先填 Base URL 和 API Key。' : '预设 provider 只保留 provider、model、api key 这三个核心输入。'}</div>
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key" \${isCustom ? 'oninput="resetCustomWizard()"' : ''}>
+            </div>
+            \${isCustom || currentProvider.type === 'proxy' ? \`
+            <div class="form-group">
+              <label class="form-label">Base URL</label>
+              <input type="text" id="baseUrl" class="form-input" value="\${c.baseUrl || currentProvider.baseUrl || ''}" placeholder="例如: https://api.example.com/v1" \${isCustom ? 'oninput="syncCustomEndpointId(); resetCustomWizard()"' : ''}>
+            </div>
+            \` : ''}
           </div>
 
-          <div class="form-group">
-            <label class="form-label">第 4 步：Endpoint ID</label>
-            <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrl(c.baseUrl || currentProvider.baseUrl || '') || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
-            <small style="color:#6B7280;font-size:12px">OpenClaw 会把这个作为 provider 标识使用</small>
+          \${isCustom ? \`
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 3 步：OpenClaw Custom Onboarding</div>
+            <div class="wizard-step-desc">这部分按 OpenClaw 源码顺序：compatibility -> model id -> verify -> endpoint id -> alias。</div>
+            <div class="form-group">
+              <label class="form-label">Endpoint compatibility</label>
+              <select id="apiFormat" class="form-select" onchange="resetCustomWizard()">
+                <option value="openai-completions" \${normalizeApiFormat(c.apiFormat || 'openai-completions') === 'openai-completions' ? 'selected' : ''}>OpenAI-compatible</option>
+                <option value="${ANTHROPIC_API_FORMAT}" \${normalizeApiFormat(c.apiFormat) === '${ANTHROPIC_API_FORMAT}' ? 'selected' : ''}>Anthropic-compatible</option>
+                <option value="unknown">Unknown (自动探测)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Model ID</label>
+              <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || state.selectedModel || ''}" placeholder="例如: glm-5, claude-sonnet-4" oninput="resetCustomWizard()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Endpoint ID</label>
+              <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrl(c.baseUrl || currentProvider.baseUrl || '') || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Model alias (optional)</label>
+              <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: glm">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Context Window</label>
+              <input type="number" id="contextWindow" class="form-input" value="\${c.contextWindow || 128000}" placeholder="128000">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Max Tokens</label>
+              <input type="number" id="maxTokens" class="form-input" value="\${c.maxTokens || 4096}" placeholder="4096">
+            </div>
+            <div id="custom-wizard-result" style="margin-top:12px">
+              \${state.customWizard.message ? \`<div class="note" style="background:\${state.customWizard.verified ? '#D1FAE5' : '#FEF2F2'};color:\${state.customWizard.verified ? '#065F46' : '#991B1B'}">\${state.customWizard.message}</div>\` : ''}
+            </div>
           </div>
-
-          <div class="form-group">
-            <label class="form-label">可选：Model alias</label>
-            <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: local, glm">
+          \` : \`
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 3 步：选择 Model</div>
+            <div class="wizard-step-desc">预设 provider 不再显示推荐模型卡片，只保留源码语义上的 model 选择。</div>
+            <select id="presetModel" class="form-select" onchange="selectModel(this.value)">
+              \${renderModelOptions(state.selectedProvider, state.selectedModel)}
+            </select>
           </div>
+          \`}
 
-          <div class="form-group">
-            <label class="form-label">上下文窗口 (Context Window)</label>
-            <input type="number" id="contextWindow" class="form-input" value="\${c.contextWindow || 128000}" placeholder="128000">
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">最大输出 Token</label>
-            <input type="number" id="maxTokens" class="form-input" value="\${c.maxTokens || 4096}" placeholder="4096">
-          </div>
-
-          <div id="custom-wizard-result" style="margin-top:12px">
-            \${state.customWizard.message ? \`<div class="note" style="background:\${state.customWizard.verified ? '#D1FAE5' : '#FEF2F2'};color:\${state.customWizard.verified ? '#065F46' : '#991B1B'}">\${state.customWizard.message}</div>\` : ''}
-          </div>
-          \` : ''}
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="section">
-          <div class="form-group">
-            <label class="form-label">服务端口号</label>
-            <input type="number" id="gport" class="form-input" value="\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}">
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 4 步：本地网关参数</div>
+            <div class="form-group">
+              <label class="form-label">服务端口号</label>
+              <input type="number" id="gport" class="form-input" value="\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}">
+            </div>
           </div>
         </div>
 
@@ -1834,12 +1832,13 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     async function saveConfig() {
       const provider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
       const isCustom = state.selectedProvider === 'custom';
+      const selectedPresetModel = $('presetModel')?.value || state.selectedModel;
 
       const configData = {
         apiKey: $('apiKey')?.value || '',
         gatewayPort: parseInt($('gport')?.value || String(DEFAULT_GATEWAY_PORT)),
         provider: state.selectedProvider,
-        model: isCustom ? ($('customModelId')?.value || state.selectedModel) : state.selectedModel,
+        model: isCustom ? ($('customModelId')?.value || state.selectedModel) : selectedPresetModel,
       };
 
       // 中转服务和自定义配置需要保存额外信息

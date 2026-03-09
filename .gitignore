@@ -43,6 +43,7 @@ apps/desktop/src-tauri/target/
 # License data (sensitive)
 *.license-data
 .license-cache/
+license-server/.s/
 
 # Temporary files
 tmp/

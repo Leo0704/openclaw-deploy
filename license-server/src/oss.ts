@@ -8,7 +8,7 @@ const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || '';
 const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || '';
 const OSS_FILE_KEY = 'license/codes.json';
 
-let ossClient: OSS | null = null;
+let ossClient: any = null;
 
 function normalizeCode(code: string): string {
   return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -17,7 +17,7 @@ function normalizeCode(code: string): string {
 /**
  * 获取 OSS 客户端
  */
-function getOSSClient(): OSS {
+function getOSSClient(): any {
   if (!ossClient) {
     ossClient = new OSS({
       region: OSS_REGION,

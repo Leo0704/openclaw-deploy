@@ -1,6 +1,6 @@
 {
   "name": "lobster-license-server",
-  "version": "1.0.0",
+  "version": "1.0.9",
   "description": "龙虾助手激活码验证服务",
   "main": "dist/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@alicloud/fc2": "^2.6.0",
-    "@alicloud/oss20231115": "^1.0.0",
+    "ali-oss": "^6.21.0",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

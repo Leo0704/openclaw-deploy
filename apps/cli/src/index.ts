@@ -44,13 +44,14 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.9';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const SOURCE_REPO_PATH = 'openclaw/openclaw';
 const RELEASE_REPO_PATH = 'Leo0704/lobster-releases';
 const DEFAULT_LICENSE_SERVER_URL = process.env.LOBSTER_LICENSE_SERVER_URL || 'https://license.lobster-assistant.com';
 const PRODUCT_ID = 'lobster-assistant-desktop';
+const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
 
 // GitHub 镜像源（国内加速）
 const GITHUB_MIRRORS = [
@@ -2330,6 +2331,10 @@ interface UpdateResult {
 }
 
 async function checkSelfUpdate(): Promise<UpdateResult> {
+  if (!IS_PACKAGED_RUNTIME) {
+    return { checked: false, updated: false };
+  }
+
   console.log('  检查更新中...');
 
   try {

@@ -35,10 +35,3 @@ services:
             methods:
               - GET
               - POST
-      customDomains:
-        - domainName: auto
-          protocol: HTTP
-          routeConfigs:
-            - path: /*
-              serviceName: lobster-license
-              functionName: license-api

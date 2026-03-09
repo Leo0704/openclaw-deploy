@@ -4,11 +4,16 @@
   "description": "龙虾助手 - OpenClaw 一键部署工具",
   "type": "commonjs",
   "main": "dist/index.js",
+  "bin": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js start",
+    "start": "node dist/index.js",
     "clean": "rm -rf dist bin",
-    "pkg": "pkg"
+    "pkg": "pkg . --targets node18-macos-arm64,node18-macos-x64,node18-linux-x64,node18-win-x64 --output-path bin"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "outputPath": "bin"
   },
   "dependencies": {
     "@clack/prompts": "^0.8.0",

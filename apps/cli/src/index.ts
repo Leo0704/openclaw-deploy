@@ -754,24 +754,107 @@ function createServer(config) {
 }
 
 // ============================================
-// 自动更新（龙虾助手本身）
+// 自动更新（龙虾助手本身）- 从 GitHub Releases 拉取
 // ============================================
 
+const LOBSTER_REPO = 'https://api.github.com/repos/Leo0704/lobster-releases/releases/latest';
+
 async function checkSelfUpdate() {
-  // TODO: 实现自动更新逻辑
-  // 1. 从更新服务器检查最新版本
-  // 2. 如果有新版本，下载并替换
-  // 3. 重启应用
   console.log('  检查更新中...');
 
-  // 这里需要你的更新服务器API
-  // const latestVersion = await fetch('https://your-update-server.com/api/version').then(r => r.json());
-  // if (latestVersion.version !== VERSION) {
-  //   console.log('  发现新版本，正在更新...');
-  //   // 下载更新、替换文件、重启
-  // }
+  try {
+    // 从 GitHub API 获取最新 release 信息
+    const https = require('https');
+    const releaseInfo = await new Promise((resolve, reject) => {
+      https.get(LOBSTER_REPO, {
+        headers: { 'User-Agent': 'Lobster-Assistant' }
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); }
+          catch { reject(new Error('解析响应失败')); }
+        });
+      }).on('error', reject);
+    });
 
-  console.log('  已是最新版本');
+    if (!releaseInfo || !releaseInfo.tag_name) {
+      console.log('  无法获取版本信息，跳过更新');
+      return;
+    }
+
+    const latestVersion = releaseInfo.tag_name.replace(/^v/, '');
+    if (latestVersion === VERSION) {
+      console.log('  已是最新版本');
+      return;
+    }
+
+    console.log(`  发现新版本 v${latestVersion}，正在更新...`);
+
+    // 确定当前平台的二进制文件名
+    const platform = os.platform();
+    const arch = os.arch();
+    let assetName;
+    if (platform === 'darwin' && arch === 'arm64') {
+      assetName = 'lobster-macos-arm64';
+    } else if (platform === 'darwin') {
+      assetName = 'lobster-macos-x64';
+    } else if (platform === 'win32') {
+      assetName = 'lobster-win-x64.exe';
+    } else {
+      assetName = 'lobster-linux-x64';
+    }
+
+    // 查找对应的 asset
+    const asset = releaseInfo.assets?.find(a => a.name === assetName);
+    if (!asset) {
+      console.log(`  未找到 ${assetName}，跳过更新`);
+      return;
+    }
+
+    // 下载新版本
+    const currentExe = process.execPath;
+    const newExe = currentExe + '.new';
+
+    await new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(newExe);
+      https.get(asset.browser_download_url, {
+        headers: { 'User-Agent': 'Lobster-Assistant' }
+      }, (res) => {
+        res.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve(true);
+        });
+      }).on('error', (e) => {
+        fs.unlinkSync(newExe);
+        reject(e);
+      });
+    });
+
+    // 设置可执行权限
+    if (platform !== 'win32') {
+      fs.chmodSync(newExe, 0o755);
+    }
+
+    // 替换旧文件
+    const backupExe = currentExe + '.old';
+    fs.renameSync(currentExe, backupExe);
+    fs.renameSync(newExe, currentExe);
+
+    console.log('  更新完成！正在重启...');
+
+    // 重启
+    const { spawn } = require('child_process');
+    spawn(currentExe, process.argv.slice(1), {
+      detached: true,
+      stdio: 'inherit'
+    });
+    process.exit(0);
+
+  } catch (e) {
+    console.log(`  更新检查失败: ${e.message}`);
+  }
 }
 
 // ============================================
@@ -781,8 +864,15 @@ async function checkSelfUpdate() {
 async function main() {
   const config = loadConfig();
 
-  // 龙虾助手自动更新（强制）
+  // 龙虾助手自动更新（启动时检查）
   await checkSelfUpdate();
+
+  // 每天自动检查更新
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+  setInterval(() => {
+    console.log('[自动更新] 每日检查更新...');
+    checkSelfUpdate();
+  }, ONE_DAY);
 
   const server = createServer(config);
   const port = process.env.LOBSTER_PORT || DEFAULT_WEB_PORT;
@@ -792,6 +882,7 @@ async function main() {
     console.log('\x1b[46m\x1b[30m 🦞 龙虾助手 \x1b[0m');
     console.log('');
     console.log(`  Web 界面: \x1b[36mhttp://localhost:${port}\x1b[0m`);
+    console.log('  自动更新: 每24小时检查');
     console.log('');
     console.log('  按 Ctrl+C 停止');
     console.log('');

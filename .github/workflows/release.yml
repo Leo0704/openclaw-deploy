@@ -1,0 +1,73 @@
+name: Release Lobster Assistant
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: apps/cli
+        run: npm install
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries with pkg
+        working-directory: apps/cli
+        run: |
+          npm install -g pkg
+          npx pkg . --targets node18-macos-arm64,node18-macos-x64,node18-linux-x64,node18-win-x64 --output-path bin
+
+      - name: Rename binaries
+        working-directory: apps/cli/bin
+        run: |
+          mv index-macos-arm64 lobster-macos-arm64 || true
+          mv index-macos-x64 lobster-macos-x64 || true
+          mv index-linux-x64 lobster-linux-x64 || true
+          mv index-win-x64.exe lobster-win-x64.exe || true
+          chmod +x lobster-*
+
+      - name: Checkout releases repo
+        uses: actions/checkout@v4
+        with:
+          repository: Leo0704/lobster-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          path: releases-repo
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v1
+        with:
+          repository: Leo0704/lobster-releases
+          tag_name: ${{ github.ref_name }}
+          name: Lobster Assistant ${{ github.ref_name }}
+          body: |
+            ## 更新内容
+            发布时间: ${{ github.event.head_commit.message }}
+
+            ## 下载
+            选择适合你系统的版本：
+            - **macOS (Apple Silicon)**: `lobster-macos-arm64`
+            - **macOS (Intel)**: `lobster-macos-x64`
+            - **Linux**: `lobster-linux-x64`
+            - **Windows**: `lobster-win-x64.exe`
+          files: |
+            apps/cli/bin/lobster-macos-arm64
+            apps/cli/bin/lobster-macos-x64
+            apps/cli/bin/lobster-linux-x64
+            apps/cli/bin/lobster-win-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}

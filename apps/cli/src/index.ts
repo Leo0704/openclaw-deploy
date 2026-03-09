@@ -44,7 +44,7 @@ const {
   performHealthChecks,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.15';
+const VERSION = '1.0.16';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -581,6 +581,25 @@ function detectProjectPackageManager(projectPath: string): 'pnpm' | 'npm' {
   return 'npm';
 }
 
+function isOpenClawProjectDir(projectPath: string): boolean {
+  if (!projectPath || !fs.existsSync(projectPath)) {
+    return false;
+  }
+
+  try {
+    const stat = fs.statSync(projectPath);
+    if (!stat.isDirectory()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const packageJson = readJsonFile(path.join(projectPath, 'package.json'));
+  const packageName = String(packageJson?.name || '').trim();
+  return packageName === 'openclaw';
+}
+
 function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; command: string } {
   const pm = detectProjectPackageManager(projectPath);
   return { pm, command: pm === 'pnpm' ? 'pnpm install' : 'npm install' };
@@ -608,6 +627,10 @@ function readGatewayTokenFromHome(): string | null {
 }
 
 function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; error?: string } {
+  if (!isOpenClawProjectDir(projectPath)) {
+    return { ready: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
+  }
+
   if (!fs.existsSync(path.join(projectPath, 'package.json'))) {
     return { ready: false, error: 'OpenClaw 安装目录缺少 package.json，请重新部署' };
   }
@@ -692,6 +715,18 @@ function ensureDependencyInstalled(
     timeout: 900000,
     ignoreError: true,
   });
+
+  if (name === 'git' && os.platform() === 'darwin' && plan.command === 'xcode-select --install') {
+    if (checkCommand(name)) {
+      addLog(`${name} 自动安装成功 ✓`, 'success');
+      return { success: true };
+    }
+    addLog('已触发 Xcode Command Line Tools 安装器，请先完成安装后重试', 'warning');
+    return {
+      success: false,
+      manual: '已打开 Xcode Command Line Tools 安装器，请完成安装后重新点击部署',
+    };
+  }
 
   if (!installResult.success || !checkCommand(name)) {
     addLog(`${name} 自动安装失败`, 'error');
@@ -932,8 +967,9 @@ let logs: Array<{ time: string; level: string; message: string }> = [];
 
 function getGatewayRuntimeStatus(config: Record<string, unknown>) {
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+  const installPath = String(config.installPath || '');
   return {
-    installed: !!(config.installPath && fs.existsSync(config.installPath as string)),
+    installed: !!installPath && isOpenClawProjectDir(installPath),
     running: gatewayStatus === 'running' || gatewayStatus === 'starting',
     state: gatewayStatus,
     gatewayPort,
@@ -2161,7 +2197,7 @@ function handleAPI(action: string, data: Record<string, unknown>, config: Record
       return { success: true, skills: filtered };
 
     case 'skills/installed':
-      if (!config.installPath) return { success: true, skills: [] };
+      if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) return { success: true, skills: [] };
       const skillsDir = path.join(config.installPath as string, '.claude', 'skills');
       if (!fs.existsSync(skillsDir)) return { success: true, skills: [] };
       try {
@@ -2298,12 +2334,46 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
         return { success: false, error: '网络连接失败，请检查网络后重试', logs };
       }
     } else {
+      const existingStat = fs.statSync(installPath);
+      if (!existingStat.isDirectory()) {
+        addLog('错误: 安装路径指向一个文件', 'error');
+        return { success: false, error: '安装路径指向一个文件，请改成目录路径', logs };
+      }
+      if (!isOpenClawProjectDir(installPath)) {
+        const existingEntries = fs.readdirSync(installPath);
+        if (existingEntries.length === 0) {
+          addLog('目录存在但为空，将在该目录中克隆 OpenClaw...');
+          let cloneSuccess = false;
+          for (let i = 0; i < GITHUB_MIRRORS.length; i++) {
+            const mirror = GITHUB_MIRRORS[i];
+            const repoUrl = getMirrorRepo(i);
+            addLog(`尝试克隆 (${mirror.name})...`);
+            const cloneResult = runCommand(`git clone --depth 1 ${repoUrl} "${installPath}"`, process.cwd(), {
+              timeout: 300000,
+            });
+            if (cloneResult.success) {
+              addLog(`仓库克隆成功 ✓ (使用: ${mirror.name})`, 'success');
+              cloneSuccess = true;
+              break;
+            }
+            addLog(`${mirror.name} 克隆失败，尝试下一个...`, 'warning');
+          }
+          if (!cloneSuccess) {
+            addLog('所有镜像源均克隆失败，请检查网络', 'error');
+            return { success: false, error: '网络连接失败，请检查网络后重试', logs };
+          }
+        } else {
+          addLog('错误: 目录已存在，但不是 OpenClaw 项目目录', 'error');
+          return { success: false, error: '安装路径已存在且不是 OpenClaw 项目，请换一个空目录或正确的 OpenClaw 目录', logs };
+        }
+      } else {
       addLog('目录已存在，更新中...');
       const pullResult = runCommand('git pull', installPath, { ignoreError: true });
       if (pullResult.success) {
         addLog('更新成功 ✓', 'success');
       } else {
         addLog('更新失败，使用现有代码', 'warning');
+      }
       }
     }
 
@@ -2520,7 +2590,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
   if (!config.apiKey) {
     return { success: false, error: '请先配置 API Key' };
   }
-  if (!config.installPath || !fs.existsSync(config.installPath as string)) {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
     return { success: false, error: '请先部署' };
   }
   if (gatewayStatus === 'starting' || gatewayStatus === 'running') {
@@ -2704,7 +2774,7 @@ function handleStop(): Record<string, unknown> {
 // ============================================
 
 function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, unknown> {
-  if (!config.installPath || !fs.existsSync(config.installPath as string)) {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
     return { success: false, error: '请先部署' };
   }
 
@@ -2765,6 +2835,9 @@ function handleSkillInstall(data: Record<string, unknown>, config: Record<string
   if (!config.installPath || !fs.existsSync(config.installPath as string)) {
     return { success: false, error: '请先部署 OpenClaw' };
   }
+  if (!isOpenClawProjectDir(config.installPath as string)) {
+    return { success: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
+  }
 
   try {
     console.log(`[技能] 正在安装: ${skillId}`);
@@ -2800,6 +2873,9 @@ function handleSkillUninstall(data: Record<string, unknown>, config: Record<stri
   }
   if (!config.installPath) {
     return { success: false, error: '请先部署 OpenClaw' };
+  }
+  if (!isOpenClawProjectDir(config.installPath as string)) {
+    return { success: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
   }
 
   try {

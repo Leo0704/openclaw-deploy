@@ -58,6 +58,23 @@ export interface PreDeployCheckResult {
   warnings: string[];
 }
 
+type ExistingInstallState =
+  | { kind: 'missing' }
+  | { kind: 'file' }
+  | { kind: 'empty-dir' }
+  | { kind: 'openclaw-project'; packageManager: 'pnpm' | 'npm' }
+  | { kind: 'non-openclaw-dir' };
+
+function buildUnknownDiskSpaceResult(requiredBytes: number, checkPath: string, reason: string): DiskSpaceResult {
+  return {
+    available: true,
+    freeBytes: 0,
+    requiredBytes,
+    path: checkPath,
+    message: reason,
+  };
+}
+
 // ============================================
 // 磁盘空间检查
 // ============================================
@@ -96,19 +113,19 @@ export function checkDiskSpace(requiredBytes: number, checkPath: string): DiskSp
       }
 
       if (!Number.isFinite(freeBytes) || freeBytes < 0) {
-        freeBytes = Number.MAX_SAFE_INTEGER;
+        return buildUnknownDiskSpaceResult(requiredBytes, checkPath, '无法检查磁盘空间（Windows 存储查询失败）');
       }
     } else {
-      // Unix/Linux/macOS
-      try {
-        const output = execSync(`df -k "${targetPath}" | tail -1`, { encoding: 'utf-8' });
-        const parts = output.trim().split(/\s+/);
-        const freeKB = parseInt(parts[3], 10);
-        freeBytes = freeKB * 1024;
-      } catch {
-        // 如果 df 命令失败，使用保守估计
-        freeBytes = 1024 * 1024 * 1024; // 假设 1GB
+      const output = execSync(`df -k "${targetPath}" | tail -1`, {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const parts = output.trim().split(/\s+/);
+      const freeKB = parseInt(parts[3], 10);
+      if (!Number.isFinite(freeKB) || freeKB < 0) {
+        return buildUnknownDiskSpaceResult(requiredBytes, checkPath, '无法检查磁盘空间（df 输出无效）');
       }
+      freeBytes = freeKB * 1024;
     }
 
     const available = freeBytes >= requiredBytes;
@@ -123,13 +140,11 @@ export function checkDiskSpace(requiredBytes: number, checkPath: string): DiskSp
         : `磁盘空间不足 (需要: ${formatBytes(requiredBytes)}, 可用: ${formatBytes(freeBytes)})`,
     };
   } catch (error) {
-    return {
-      available: true, // 检查失败时假设空间充足
-      freeBytes: 0,
+    return buildUnknownDiskSpaceResult(
       requiredBytes,
-      path: checkPath,
-      message: `无法检查磁盘空间: ${error instanceof Error ? error.message : '未知错误'}`,
-    };
+      checkPath,
+      `无法检查磁盘空间: ${error instanceof Error ? error.message : '未知错误'}`
+    );
   }
 }
 
@@ -142,6 +157,40 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function detectExistingInstallState(installPath: string): ExistingInstallState {
+  if (!fs.existsSync(installPath)) {
+    return { kind: 'missing' };
+  }
+
+  const stat = fs.statSync(installPath);
+  if (!stat.isDirectory()) {
+    return { kind: 'file' };
+  }
+
+  const packageJsonPath = path.join(installPath, 'package.json');
+  if (fs.existsSync(packageJsonPath)) {
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const packageName = String(packageJson?.name || '').trim();
+      const packageManager = String(packageJson?.packageManager || '').split('@')[0].trim();
+      const inferredPackageManager: 'pnpm' | 'npm' =
+        packageManager === 'pnpm' || fs.existsSync(path.join(installPath, 'pnpm-lock.yaml')) ? 'pnpm' : 'npm';
+      if (packageName === 'openclaw') {
+        return { kind: 'openclaw-project', packageManager: inferredPackageManager };
+      }
+    } catch {
+      // fall through to generic directory handling
+    }
+  }
+
+  const entries = fs.readdirSync(installPath);
+  if (entries.length === 0) {
+    return { kind: 'empty-dir' };
+  }
+
+  return { kind: 'non-openclaw-dir' };
 }
 
 // ============================================
@@ -325,6 +374,7 @@ export async function performHealthChecks(config: {
   const checks: HealthCheckResult[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
+  const installState = detectExistingInstallState(config.installPath);
 
   // 1. Node.js 版本检查
   const nodeCheck = checkNodeVersion('18.0.0');
@@ -355,17 +405,28 @@ export async function performHealthChecks(config: {
   // 3. npm/pnpm 检查
   const npmAvailable = checkCommand('npm');
   const pnpmAvailable = checkCommand('pnpm');
+  const requiresPnpm = installState.kind === 'openclaw-project' ? installState.packageManager === 'pnpm' : true;
   checks.push({
     name: '包管理器',
-    passed: npmAvailable,
-    message: npmAvailable
+    passed: requiresPnpm ? pnpmAvailable : npmAvailable,
+    message: requiresPnpm
       ? pnpmAvailable
-        ? 'pnpm 已安装 (推荐)'
-        : 'npm 已安装'
-      : '未找到 npm',
+        ? installState.kind === 'openclaw-project'
+          ? '检测到当前 OpenClaw 目录要求 pnpm，pnpm 已安装'
+          : 'OpenClaw 部署要求 pnpm，pnpm 已安装'
+        : installState.kind === 'openclaw-project'
+          ? '检测到当前 OpenClaw 目录要求 pnpm，但未找到 pnpm'
+          : 'OpenClaw 部署要求 pnpm，但未找到 pnpm'
+      : npmAvailable
+        ? pnpmAvailable
+          ? 'pnpm 已安装 (推荐)'
+          : 'npm 已安装'
+        : '未找到 npm',
     severity: 'critical',
   });
-  if (!npmAvailable) {
+  if (requiresPnpm && !pnpmAvailable) {
+    warnings.push('当前 OpenClaw 目录要求 pnpm，部署时会尝试自动安装 pnpm');
+  } else if (!npmAvailable) {
     errors.push('未找到 npm，请先安装 Node.js: https://nodejs.org');
   }
 
@@ -376,10 +437,12 @@ export async function performHealthChecks(config: {
     name: '磁盘空间',
     passed: diskCheck.available,
     message: diskCheck.message || '',
-    severity: diskCheck.available ? 'info' : 'critical',
+    severity: diskCheck.message?.startsWith('无法检查磁盘空间') ? 'warning' : diskCheck.available ? 'info' : 'critical',
     details: { freeBytes: diskCheck.freeBytes, requiredBytes: diskCheck.requiredBytes },
   });
-  if (!diskCheck.available) {
+  if (diskCheck.message?.startsWith('无法检查磁盘空间')) {
+    warnings.push(diskCheck.message);
+  } else if (!diskCheck.available) {
     errors.push(diskCheck.message || '磁盘空间不足');
   }
 
@@ -397,22 +460,50 @@ export async function performHealthChecks(config: {
   }
 
   // 6. 安装路径检查
-  const pathExists = fs.existsSync(config.installPath);
-  if (pathExists) {
-    checks.push({
-      name: '安装路径',
-      passed: true,
-      message: '目录已存在，将进行更新',
-      severity: 'warning',
-    });
-    warnings.push(`目录 ${config.installPath} 已存在，将尝试更新而不是全新安装`);
-  } else {
-    checks.push({
-      name: '安装路径',
-      passed: true,
-      message: '目录不存在，将创建新目录',
-      severity: 'info',
-    });
+  switch (installState.kind) {
+    case 'missing':
+      checks.push({
+        name: '安装路径',
+        passed: true,
+        message: '目录不存在，将创建新目录',
+        severity: 'info',
+      });
+      break;
+    case 'empty-dir':
+      checks.push({
+        name: '安装路径',
+        passed: true,
+        message: '目录为空，将在该目录中部署 OpenClaw',
+        severity: 'info',
+      });
+      break;
+    case 'openclaw-project':
+      checks.push({
+        name: '安装路径',
+        passed: true,
+        message: `检测到现有 OpenClaw 目录，将执行更新 (${installState.packageManager})`,
+        severity: 'warning',
+      });
+      warnings.push(`目录 ${config.installPath} 已存在，将尝试更新现有 OpenClaw`);
+      break;
+    case 'file':
+      checks.push({
+        name: '安装路径',
+        passed: false,
+        message: '安装路径指向一个文件，而不是目录',
+        severity: 'critical',
+      });
+      errors.push(`安装路径 ${config.installPath} 指向文件，请改成目录路径`);
+      break;
+    case 'non-openclaw-dir':
+      checks.push({
+        name: '安装路径',
+        passed: false,
+        message: '目录已存在，但不是 OpenClaw 项目目录',
+        severity: 'critical',
+      });
+      errors.push(`安装路径 ${config.installPath} 已存在且不是 OpenClaw 项目，请换一个空目录或正确的 OpenClaw 目录`);
+      break;
   }
 
   // 7. 网络连接检查 (非阻塞)

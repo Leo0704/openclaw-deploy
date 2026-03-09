@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// @ts-nocheck
 
 /**
  * 龙虾助手
  * 双击运行 → 自动打开浏览器 → 在网页上操作
  */
 
-const { execSync, spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const http = require('http');
-const { URL } = require('url');
+const { execSync, execFileSync, spawn } = require('child_process') as typeof import('child_process');
+const fs = require('fs') as typeof import('fs');
+const path = require('path') as typeof import('path');
+const os = require('os') as typeof import('os');
+const http = require('http') as typeof import('http');
+const nodeCrypto = require('crypto') as typeof import('crypto');
+const { URL: NodeURL } = require('url') as typeof import('url');
 
 // 导入错误处理和系统检查工具
 const {
@@ -24,7 +24,7 @@ const {
   getUserFriendlyMessage,
   logError,
   isRecoverable,
-} = require('./error-utils');
+} = require('./error-utils') as typeof import('./error-utils');
 
 const {
   fetchWithTimeout,
@@ -33,7 +33,7 @@ const {
   hasNetworkConnection,
   checkGitHubAccess,
   downloadFile,
-} = require('./network-utils');
+} = require('./network-utils') as typeof import('./network-utils');
 
 const {
   checkDiskSpace,
@@ -42,12 +42,15 @@ const {
   checkNodeVersion,
   checkDependencies,
   performHealthChecks,
-} = require('./system-check');
+} = require('./system-check') as typeof import('./system-check');
 
 const VERSION = '1.0.0';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
-const DEFAULT_REPO = 'https://github.com/openclaw/openclaw.git';
+const SOURCE_REPO_PATH = 'openclaw/openclaw';
+const RELEASE_REPO_PATH = 'Leo0704/lobster-releases';
+const DEFAULT_LICENSE_SERVER_URL = process.env.LOBSTER_LICENSE_SERVER_URL || 'https://license.lobster-assistant.com';
+const PRODUCT_ID = 'lobster-assistant-desktop';
 
 // GitHub 镜像源（国内加速）
 const GITHUB_MIRRORS = [
@@ -59,13 +62,182 @@ const GITHUB_MIRRORS = [
 // 获取镜像仓库 URL
 function getMirrorRepo(mirrorIndex: number = 0): string {
   const mirror = GITHUB_MIRRORS[mirrorIndex] || GITHUB_MIRRORS[0];
-  return `${mirror.url}/openclaw/openclaw.git`;
+  return `${mirror.url}/${SOURCE_REPO_PATH}.git`;
 }
 
-// 获取镜像 API URL
-function getMirrorApi(mirrorIndex: number = 0): string {
+// 获取镜像 Release API URL
+function getMirrorReleaseApi(mirrorIndex: number = 0): string {
   const mirror = GITHUB_MIRRORS[mirrorIndex] || GITHUB_MIRRORS[0];
-  return `${mirror.api}/repos/Leo0704/lobster-releases/releases/latest`;
+  return `${mirror.api}/repos/${RELEASE_REPO_PATH}/releases/latest`;
+}
+
+function buildMirrorDownloadUrl(mirrorIndex: number, originalUrl: string): string {
+  if (mirrorIndex === 0) {
+    return originalUrl;
+  }
+
+  const mirror = GITHUB_MIRRORS[mirrorIndex] || GITHUB_MIRRORS[0];
+  const parsed = new NodeURL(originalUrl);
+
+  if (parsed.origin !== 'https://github.com') {
+    return originalUrl;
+  }
+
+  return `${mirror.url}${parsed.pathname}${parsed.search}`;
+}
+
+function getLicenseServerUrl(config: Record<string, unknown>): string {
+  const configuredUrl = (config.licenseServerUrl || '').toString().trim();
+  const baseUrl = configuredUrl || DEFAULT_LICENSE_SERVER_URL;
+  return baseUrl.replace(/\/+$/, '');
+}
+
+function normalizeActivationCode(value: unknown): string {
+  return String(value || '').trim().toUpperCase();
+}
+
+function generateDeviceFingerprint(): string {
+  const interfaces = os.networkInterfaces();
+  const macAddresses = Object.values(interfaces)
+    .flatMap((items) => items || [])
+    .filter((item) => !item.internal && item.mac && item.mac !== '00:00:00:00:00:00')
+    .map((item) => item.mac)
+    .sort()
+    .join('|');
+
+  const fingerprintSource = [
+    os.hostname(),
+    os.platform(),
+    os.arch(),
+    os.machine?.() || '',
+    macAddresses,
+  ].join('::');
+
+  return nodeCrypto.createHash('sha256').update(fingerprintSource).digest('hex');
+}
+
+async function activateLicense(code: string, config: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const normalizedCode = normalizeActivationCode(code);
+  const compactCode = normalizedCode.replace(/[^A-Z0-9]/g, '');
+
+  if (!compactCode || compactCode.length < 16) {
+    return {
+      success: false,
+      error: getUserFriendlyMessage(Errors.validation('激活码格式不正确，请检查后重试', 'code')),
+    };
+  }
+
+  const licenseServerUrl = getLicenseServerUrl(config);
+  const deviceFingerprint = generateDeviceFingerprint();
+  const deviceName = os.hostname();
+
+  const result = await fetchWithRetry<{
+    success?: boolean;
+    message?: string;
+    license?: {
+      activationCode?: string;
+      activatedAt?: string;
+    };
+  }>(
+    `${licenseServerUrl}/activate`,
+    {
+      method: 'POST',
+      body: {
+        code: normalizedCode,
+        deviceFingerprint,
+        deviceName,
+        productId: PRODUCT_ID,
+      },
+      headers: {
+        'User-Agent': 'Lobster-Assistant',
+      },
+    },
+    {
+      timeout: 15000,
+      maxRetries: 2,
+    }
+  );
+
+  if (!result.success) {
+    const error = result.error || Errors.activationFailed('激活服务不可用，请稍后重试');
+    logError(error, 'license-activate');
+    return { success: false, error: getUserFriendlyMessage(error) };
+  }
+
+  if (!result.data?.success) {
+    const error = Errors.activationFailed(result.data?.message || '激活失败');
+    return { success: false, error: getUserFriendlyMessage(error) };
+  }
+
+  config.activated = true;
+  config.activationCode = result.data.license?.activationCode || normalizedCode;
+  config.activatedAt = result.data.license?.activatedAt || new Date().toISOString();
+  config.deviceName = deviceName;
+  config.deviceFingerprint = deviceFingerprint;
+  config.licenseServerUrl = licenseServerUrl;
+  saveConfig(config);
+
+  return { success: true, config };
+}
+
+async function verifyLicenseStatus(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!config.activated || !config.activationCode) {
+    return {
+      success: true,
+      license: {
+        activated: false,
+        activationCode: null,
+        deviceName: null,
+        activatedAt: null,
+        valid: false,
+      },
+    };
+  }
+
+  const deviceFingerprint = (config.deviceFingerprint as string) || generateDeviceFingerprint();
+  const licenseServerUrl = getLicenseServerUrl(config);
+  const code = normalizeActivationCode(config.activationCode);
+
+  const result = await fetchWithRetry<{ valid?: boolean; message?: string }>(
+    `${licenseServerUrl}/verify`,
+    {
+      method: 'POST',
+      body: {
+        code,
+        deviceFingerprint,
+        productId: PRODUCT_ID,
+      },
+      headers: {
+        'User-Agent': 'Lobster-Assistant',
+      },
+    },
+    {
+      timeout: 10000,
+      maxRetries: 1,
+    }
+  );
+
+  const valid = !!result.success && !!result.data?.valid;
+  if (!valid && result.error) {
+    logError(result.error, 'license-verify');
+  }
+
+  if (!valid && result.success) {
+    config.activated = false;
+    saveConfig(config);
+  }
+
+  return {
+    success: true,
+    license: {
+      activated: !!config.activated,
+      activationCode: config.activationCode || null,
+      deviceName: config.deviceName || null,
+      activatedAt: config.activatedAt || null,
+      valid,
+      message: result.data?.message || (valid ? '授权有效' : '授权无效'),
+    },
+  };
 }
 
 // 热门技能列表（从 ClawHub 获取）
@@ -269,7 +441,7 @@ function loadConfig() {
   }
 }
 
-function saveConfig(config) {
+function saveConfig(config: Record<string, unknown>) {
   fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
 }
 
@@ -289,6 +461,10 @@ interface RunCommandResult {
   stdout?: string;
   stderr?: string;
   error?: typeof AppError.prototype;
+}
+
+interface RunCommandArgsOptions extends RunCommandOptions {
+  args?: string[];
 }
 
 /**
@@ -351,6 +527,41 @@ function runCommand(
   return { success: false, stderr: lastError?.userMessage, error: lastError };
 }
 
+function runCommandArgs(
+  file: string,
+  cwd: string,
+  options: RunCommandArgsOptions = {}
+): RunCommandResult {
+  const { timeout = 300000, ignoreError = false, silent = false, args = [] } = options;
+
+  try {
+    const result = execFileSync(file, args, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout,
+    });
+    return { success: true, stdout: result.trim() };
+  } catch (e: unknown) {
+    const error = e as { stderr?: string; message?: string; status?: number };
+    const errorMessage = error.stderr || error.message || '未知错误';
+    const appError = createError(ErrorType.PROCESS, 'PROCESS_ERROR', {
+      userMessage: `命令执行失败: ${errorMessage}`,
+      context: { file, args, cwd, exitCode: error.status },
+    });
+
+    if (!silent) {
+      console.error(`[命令错误] ${file} ${args.join(' ')}: ${errorMessage}`);
+    }
+
+    if (ignoreError) {
+      return { success: false, stderr: appError.userMessage, error: appError };
+    }
+
+    return { success: false, stderr: appError.userMessage, error: appError };
+  }
+}
+
 /**
  * 简单版本（向后兼容）
  */
@@ -376,7 +587,7 @@ function checkCommand(cmd: string): boolean {
  */
 function isValidUrl(url: string): boolean {
   try {
-    const parsed = new URL(url);
+    const parsed = new NodeURL(url);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
   } catch {
     return false;
@@ -436,14 +647,15 @@ function openBrowser(url: string): { success: boolean; error?: string; fallbackU
 // 状态
 // ============================================
 
-let gatewayProcess = null;
-let logs = [];
+let gatewayProcess: import('child_process').ChildProcess | null = null;
+let gatewayStatus: 'stopped' | 'starting' | 'running' | 'stopping' = 'stopped';
+let logs: Array<{ time: string; level: string; message: string }> = [];
 
 // ============================================
 // Web 界面 HTML
 // ============================================
 
-function getHTML(config, status) {
+function getHTML(config: Record<string, unknown>, status: { installed: boolean; running: boolean }) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1344,6 +1556,18 @@ function getHTML(config, status) {
 // 异步版本的 handleAPI，支持健康检查等异步操作
 async function handleAPIAsync(action: string, data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   switch (action) {
+    case 'activate':
+      return activateLicense(data.code as string, config);
+
+    case 'config':
+      return handleConfigAsync(data, config);
+
+    case 'deploy':
+      return handleDeploy(data, config);
+
+    case 'test-connection':
+      return handleTestConnection(data, config);
+
     case 'health-check':
       // 执行部署前健康检查
       try {
@@ -1374,6 +1598,22 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
         return { success: false, error: (e as Error).message };
       }
 
+    case 'start':
+      return handleStart(config);
+
+    case 'status':
+      return {
+        success: true,
+        status: {
+          installed: !!(config.installPath && fs.existsSync(config.installPath as string)),
+          running: gatewayStatus === 'running' || gatewayStatus === 'starting',
+          state: gatewayStatus,
+        },
+      };
+
+    case 'license':
+      return verifyLicenseStatus(config);
+
     default:
       // 其他操作使用同步处理
       return handleAPI(action, data, config);
@@ -1382,49 +1622,11 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
 
 function handleAPI(action: string, data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
   switch (action) {
-    case 'activate':
-      const code = (data.code as string)?.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (!code || code.length < 16) {
-        return { success: false, error: '激活码格式不正确，请检查后重试' };
-      }
-      config.activated = true;
-      config.activationCode = data.code;
-      config.activatedAt = new Date().toISOString();
-      config.deviceName = os.hostname();
-      saveConfig(config);
-      return { success: true, config };
-
-    case 'deploy':
-      return handleDeploy(data, config);
-
-    case 'config':
-      return handleConfig(data, config);
-
-    case 'test-connection':
-      return handleTestConnection(data, config);
-
-    case 'start':
-      return handleStart(config);
-
     case 'stop':
       return handleStop();
 
-    case 'status':
-      return { success: true, status: { installed: !!(config.installPath && fs.existsSync(config.installPath as string)), running: !!gatewayProcess } };
-
     case 'logs':
       return { success: true, logs };
-
-    case 'license':
-      return {
-        success: true,
-        license: {
-          activated: !!config.activated,
-          activationCode: config.activationCode || null,
-          deviceName: config.deviceName || null,
-          activatedAt: config.activatedAt || null,
-        },
-      };
 
     case 'update-openclaw':
       return handleUpdateOpenClaw(config);
@@ -1462,7 +1664,7 @@ function handleAPI(action: string, data: Record<string, unknown>, config: Record
       const skillsDir = path.join(config.installPath as string, '.claude', 'skills');
       if (!fs.existsSync(skillsDir)) return { success: true, skills: [] };
       try {
-        const installed = fs.readdirSync(skillsDir).filter(f =>
+        const installed = fs.readdirSync(skillsDir).filter((f: string) =>
           fs.statSync(path.join(skillsDir, f)).isDirectory()
         );
         return { success: true, skills: installed };
@@ -1485,7 +1687,7 @@ function handleAPI(action: string, data: Record<string, unknown>, config: Record
 // 部署处理（带健康检查和回滚）
 // ============================================
 
-function handleDeploy(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+async function handleDeploy(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const installPath = (data.installPath as string) || path.join(os.homedir(), 'openclaw');
   const gatewayPort = (data.gatewayPort as number) || DEFAULT_GATEWAY_PORT;
   logs = [];
@@ -1535,13 +1737,27 @@ function handleDeploy(data: Record<string, unknown>, config: Record<string, unkn
     }
     addLog(`磁盘空间充足 (可用: ${Math.round(diskCheck.freeBytes / 1024 / 1024)}MB) ✓`, 'success');
 
-    // 4. 保存配置
+    // 4. 检查端口
+    addLog(`检查端口 ${gatewayPort}...`);
+    const portResult = await checkPortAvailability(gatewayPort);
+    if (!portResult.available) {
+      addLog(`错误: ${portResult.message}`, 'error');
+      return { success: false, error: portResult.message || '端口已被占用', logs };
+    }
+    addLog('端口可用 ✓', 'success');
+
+    // 5. 保存配置
     config.provider = data.provider || 'anthropic';
     config.model = data.model;
     config.apiKey = data.apiKey;
     config.gatewayPort = gatewayPort;
+    if (data.baseUrl !== undefined) config.baseUrl = data.baseUrl;
+    if (data.apiFormat !== undefined) config.apiFormat = data.apiFormat;
+    if (data.customModelId !== undefined) config.customModelId = data.customModelId;
+    if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
+    if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
 
-    // 5. 克隆/更新仓库（支持镜像源自动切换）
+    // 6. 克隆/更新仓库（支持镜像源自动切换）
     if (!fs.existsSync(installPath)) {
       let cloneSuccess = false;
 
@@ -1585,7 +1801,7 @@ function handleDeploy(data: Record<string, unknown>, config: Record<string, unkn
       }
     }
 
-    // 6. 安装依赖
+    // 7. 安装依赖
     const pm = deps.pnpm ? 'pnpm' : 'npm';
     addLog(`安装依赖 (${pm})...`);
     const installResult = runCommand(`${pm} install`, installPath, {
@@ -1598,7 +1814,7 @@ function handleDeploy(data: Record<string, unknown>, config: Record<string, unkn
     }
     addLog('依赖安装成功 ✓', 'success');
 
-    // 7. 构建
+    // 8. 构建
     addLog('构建项目...');
     const buildResult = runCommand(`${pm} run build`, installPath, { ignoreError: true, timeout: 300000 });
     if (buildResult.success) {
@@ -1607,7 +1823,7 @@ function handleDeploy(data: Record<string, unknown>, config: Record<string, unkn
       addLog('构建跳过（可能无构建脚本）', 'warning');
     }
 
-    // 8. 保存最终配置
+    // 9. 保存最终配置
     config.installPath = installPath;
     saveConfig(config);
 
@@ -1626,12 +1842,17 @@ function handleDeploy(data: Record<string, unknown>, config: Record<string, unkn
 // 配置处理
 // ============================================
 
-function handleConfig(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+async function handleConfigAsync(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   // 验证端口号
-  if (data.gatewayPort) {
+  if (data.gatewayPort !== undefined) {
     const port = data.gatewayPort as number;
     if (port < 1024 || port > 65535) {
-      return { success: false, error: '端口号必须在 1024-65535 之间' };
+      return { success: false, error: getUserFriendlyMessage(Errors.validation('端口号必须在 1024-65535 之间', 'gatewayPort')) };
+    }
+
+    const availability = await checkPortAvailability(port);
+    if (!availability.available) {
+      return { success: false, error: availability.message || '端口已被占用，请更换其他端口' };
     }
   }
 
@@ -1645,7 +1866,7 @@ function handleConfig(data: Record<string, unknown>, config: Record<string, unkn
 
   // 保存基本配置
   if (data.apiKey !== undefined) config.apiKey = data.apiKey;
-  if (data.gatewayPort) config.gatewayPort = data.gatewayPort;
+  if (data.gatewayPort !== undefined) config.gatewayPort = data.gatewayPort;
   if (data.provider) config.provider = data.provider;
   if (data.model) config.model = data.model;
 
@@ -1655,6 +1876,7 @@ function handleConfig(data: Record<string, unknown>, config: Record<string, unkn
   if (data.customModelId !== undefined) config.customModelId = data.customModelId;
   if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
   if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
+  if (data.licenseServerUrl !== undefined) config.licenseServerUrl = data.licenseServerUrl;
 
   saveConfig(config);
   return { success: true, config };
@@ -1662,7 +1884,8 @@ function handleConfig(data: Record<string, unknown>, config: Record<string, unkn
 
 // API 连接测试
 async function handleTestConnection(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const provider = PROVIDERS[data.provider as string] || PROVIDERS.custom;
+  const providerKey = String(data.provider || config.provider || 'custom') as keyof typeof PROVIDERS;
+  const provider = PROVIDERS[providerKey] || PROVIDERS.custom;
   const apiKey = (data.apiKey || config.apiKey) as string;
   const baseUrl = (data.baseUrl || config.baseUrl || provider.baseUrl) as string;
   const model = (data.model || config.model) as string;
@@ -1678,7 +1901,7 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
     const client = baseUrl.startsWith('https') ? https : http;
 
     // 构建测试请求
-    const testUrl = new URL('/chat/completions', baseUrl);
+    const testUrl = new NodeURL('/chat/completions', baseUrl);
     const testBody = JSON.stringify({
       model: model,
       messages: [{ role: 'user', content: 'hi' }],
@@ -1696,7 +1919,7 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
           },
           timeout: 15000,
         },
-        (res) => {
+        (res: import('http').IncomingMessage) => {
           let body = '';
           res.on('data', (chunk: Buffer) => (body += chunk));
           res.on('end', () => {
@@ -1739,21 +1962,33 @@ async function handleTestConnection(data: Record<string, unknown>, config: Recor
 // 启动处理
 // ============================================
 
-function handleStart(config: Record<string, unknown>): Record<string, unknown> {
+async function handleStart(config: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (!config.apiKey) {
     return { success: false, error: '请先配置 API Key' };
   }
   if (!config.installPath || !fs.existsSync(config.installPath as string)) {
     return { success: false, error: '请先部署' };
   }
+  if (gatewayStatus === 'starting' || gatewayStatus === 'running') {
+    return { success: true, message: '服务已在运行中' };
+  }
 
   try {
-    const provider = PROVIDERS[config.provider as string] || PROVIDERS.custom;
+    gatewayStatus = 'starting';
+    const providerKey = String(config.provider || 'custom') as keyof typeof PROVIDERS;
+    const provider = PROVIDERS[providerKey] || PROVIDERS.custom;
     const baseUrl = (config.baseUrl || provider.baseUrl) as string;
     const apiFormat = (config.apiFormat || provider.apiFormat || 'openai-completions') as string;
     const model = (config.model || config.customModelId || '') as string;
     const contextWindow = (config.contextWindow || 128000) as number;
     const maxTokens = (config.maxTokens || 4096) as number;
+    const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
+
+    const availability = await checkPortAvailability(gatewayPort);
+    if (!availability.available) {
+      gatewayStatus = 'stopped';
+      return { success: false, error: availability.message || '端口已被占用，请更换后重试' };
+    }
 
     // 生成 OpenClaw 配置文件
     const openclawConfig: Record<string, unknown> = {
@@ -1803,43 +2038,55 @@ function handleStart(config: Record<string, unknown>): Record<string, unknown> {
     console.log(`[配置] 已写入: ${configPath}`);
 
     // 环境变量
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
-      PORT: String(config.gatewayPort || DEFAULT_GATEWAY_PORT),
-      [provider.envKey]: config.apiKey,
-      // 通用环境变量（兼容模式）
-      OPENAI_API_KEY: config.apiKey,
+      PORT: String(gatewayPort),
+      [provider.envKey]: String(config.apiKey || ''),
       OPENAI_BASE_URL: baseUrl,
-      API_KEY: config.apiKey,
-      API_PROVIDER: config.provider,
+      API_KEY: String(config.apiKey || ''),
+      API_PROVIDER: String(config.provider || ''),
       MODEL: model,
     };
 
+    if (provider.envKey !== 'OPENAI_API_KEY') {
+      env.OPENAI_API_KEY = String(config.apiKey || '');
+    }
+
     const pm = fs.existsSync(path.join(config.installPath as string, 'pnpm-lock.yaml')) ? 'pnpm' : 'npm';
 
-    gatewayProcess = spawn(`${pm} run start`, [], {
+    const processRef = spawn(`${pm} run start`, [], {
       cwd: config.installPath as string,
       env,
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    gatewayProcess = processRef;
 
-    gatewayProcess.stdout?.on('data', (d: Buffer) => {
+    processRef.stdout?.on('data', (d: Buffer) => {
       logs.push({ time: new Date().toLocaleTimeString(), level: 'info', message: d.toString().trim() });
       if (logs.length > 100) logs.shift();
     });
 
-    gatewayProcess.stderr?.on('data', (d: Buffer) => {
+    processRef.stderr?.on('data', (d: Buffer) => {
       logs.push({ time: new Date().toLocaleTimeString(), level: 'error', message: d.toString().trim() });
       if (logs.length > 100) logs.shift();
     });
 
-    gatewayProcess.on('error', (err: Error) => {
+    processRef.on('spawn', () => {
+      gatewayStatus = 'running';
+    });
+
+    processRef.on('error', (err: Error) => {
+      gatewayStatus = 'stopped';
       logs.push({ time: new Date().toLocaleTimeString(), level: 'error', message: `进程错误: ${err.message}` });
       console.error('[进程错误]', err);
     });
 
-    gatewayProcess.on('exit', (code: number | null, signal: string | null) => {
+    processRef.on('exit', (code: number | null, signal: string | null) => {
+      if (gatewayProcess === processRef) {
+        gatewayProcess = null;
+      }
+      gatewayStatus = 'stopped';
       if (code !== 0 && code !== null) {
         logs.push({ time: new Date().toLocaleTimeString(), level: 'warning', message: `进程已退出 (code: ${code})` });
       }
@@ -1847,6 +2094,7 @@ function handleStart(config: Record<string, unknown>): Record<string, unknown> {
 
     return { success: true };
   } catch (e) {
+    gatewayStatus = 'stopped';
     const error = e as Error;
     logError(error, 'start');
     return { success: false, error: getUserFriendlyMessage(error) };
@@ -1860,10 +2108,13 @@ function handleStart(config: Record<string, unknown>): Record<string, unknown> {
 function handleStop(): Record<string, unknown> {
   if (gatewayProcess) {
     try {
+      gatewayStatus = 'stopping';
       gatewayProcess.kill();
       gatewayProcess = null;
+      gatewayStatus = 'stopped';
       logs.push({ time: new Date().toLocaleTimeString(), level: 'info', message: '服务已停止' });
     } catch (e) {
+      gatewayStatus = 'running';
       console.error('[停止错误]', e);
     }
   }
@@ -1920,9 +2171,12 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
 // ============================================
 
 function handleSkillInstall(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
-  const skillId = data.skill as string;
+  const skillId = String(data.skill || '').trim();
   if (!skillId) {
     return { success: false, error: '请指定技能名称' };
+  }
+  if (!/^[a-z0-9][a-z0-9-_./]{0,127}$/i.test(skillId)) {
+    return { success: false, error: '技能名称格式不正确' };
   }
   if (!config.installPath || !fs.existsSync(config.installPath as string)) {
     return { success: false, error: '请先部署 OpenClaw' };
@@ -1930,10 +2184,13 @@ function handleSkillInstall(data: Record<string, unknown>, config: Record<string
 
   try {
     console.log(`[技能] 正在安装: ${skillId}`);
-    const result = runCommand(
-      `npx clawhub@latest install ${skillId}`,
+    const result = runCommandArgs(
+      'npx',
       config.installPath as string,
-      { timeout: 120000 }
+      {
+        args: ['clawhub@latest', 'install', skillId],
+        timeout: 120000,
+      }
     );
 
     if (result.success) {
@@ -1950,9 +2207,12 @@ function handleSkillInstall(data: Record<string, unknown>, config: Record<string
 }
 
 function handleSkillUninstall(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
-  const skillId = data.skill as string;
+  const skillId = String(data.skill || '').trim();
   if (!skillId) {
     return { success: false, error: '请指定技能名称' };
+  }
+  if (!/^[a-z0-9][a-z0-9-_./]{0,127}$/i.test(skillId) || skillId.includes('..')) {
+    return { success: false, error: '技能名称格式不正确' };
   }
   if (!config.installPath) {
     return { success: false, error: '请先部署 OpenClaw' };
@@ -1978,8 +2238,8 @@ function handleSkillUninstall(data: Record<string, unknown>, config: Record<stri
 // ============================================
 
 function createServer(config: Record<string, unknown>) {
-  return http.createServer((req, res) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  return http.createServer((req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
+    const url = new NodeURL(req.url || '/', `http://${req.headers.host}`);
 
     // 设置 CORS 头
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1997,7 +2257,7 @@ function createServer(config: Record<string, unknown>) {
       const action = url.pathname.replace('/api/', '');
       let body = '';
 
-      req.on('data', (chunk) => {
+      req.on('data', (chunk: Buffer) => {
         body += chunk;
         // 限制请求体大小 (1MB)
         if (body.length > 1024 * 1024) {
@@ -2024,7 +2284,7 @@ function createServer(config: Record<string, unknown>) {
         }
       });
 
-      req.on('error', (err) => {
+      req.on('error', (err: Error) => {
         console.error('[请求错误]', err);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: '请求处理失败' }));
@@ -2036,7 +2296,7 @@ function createServer(config: Record<string, unknown>) {
     if (url.pathname === '/') {
       const status = {
         installed: !!(config.installPath && fs.existsSync(config.installPath as string)),
-        running: !!gatewayProcess,
+        running: gatewayStatus === 'running' || gatewayStatus === 'starting',
       };
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(getHTML(config, status));
@@ -2086,7 +2346,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
 
     for (let i = 0; i < GITHUB_MIRRORS.length; i++) {
       const mirror = GITHUB_MIRRORS[i];
-      const apiUrl = getMirrorApi(i);
+      const apiUrl = getMirrorReleaseApi(i);
 
       console.log(`  尝试 ${mirror.name}...`);
 
@@ -2153,18 +2413,13 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
 
     for (let i = 0; i < GITHUB_MIRRORS.length; i++) {
       const mirror = GITHUB_MIRRORS[i];
-      // 构建下载 URL（使用镜像加速）
-      let downloadUrl = asset.browser_download_url;
-      if (i > 0) {
-        // 非直连时，使用镜像加速
-        downloadUrl = `${mirror.url}/${asset.browser_download_url.replace('https://github.com', '').replace('https://releases.github.com', '')}`;
-      }
+      const downloadUrl = buildMirrorDownloadUrl(i, asset.browser_download_url);
 
       console.log(`  尝试从 ${mirror.name} 下载...`);
 
       const downloadResult = await downloadFile(downloadUrl, newExe, {
         timeout: 120000, // 2分钟
-        onProgress: (downloaded, total) => {
+        onProgress: (downloaded: number, total: number | null) => {
           if (total && downloaded % (1024 * 1024) < 1000) {
             console.log(`  已下载: ${Math.round(downloaded / 1024 / 1024)}MB / ${Math.round(total / 1024 / 1024)}MB`);
           }

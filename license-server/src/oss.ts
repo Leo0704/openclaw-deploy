@@ -10,6 +10,10 @@ const OSS_FILE_KEY = 'license/codes.json';
 
 let ossClient: OSS | null = null;
 
+function normalizeCode(code: string): string {
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 /**
  * 获取 OSS 客户端
  */
@@ -43,6 +47,11 @@ export async function readLicenseData(): Promise<LicenseData> {
         updatedAt: new Date().toISOString(),
       };
     }
+    console.error('[OSS] 读取授权数据失败:', {
+      code: error.code,
+      message: error.message,
+      fileKey: OSS_FILE_KEY,
+    });
     throw error;
   }
 }
@@ -67,7 +76,8 @@ export async function writeLicenseData(data: LicenseData): Promise<void> {
  */
 export async function findCode(code: string): Promise<LicenseCode | null> {
   const data = await readLicenseData();
-  return data.codes.find(c => c.code === code) || null;
+  const normalized = normalizeCode(code);
+  return data.codes.find(c => normalizeCode(c.code) === normalized) || null;
 }
 
 /**
@@ -75,7 +85,8 @@ export async function findCode(code: string): Promise<LicenseCode | null> {
  */
 export async function updateCode(code: string, updates: Partial<LicenseCode>): Promise<boolean> {
   const data = await readLicenseData();
-  const index = data.codes.findIndex(c => c.code === code);
+  const normalized = normalizeCode(code);
+  const index = data.codes.findIndex(c => normalizeCode(c.code) === normalized);
 
   if (index === -1) {
     return false;

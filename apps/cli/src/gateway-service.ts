@@ -1,6 +1,7 @@
 const fs = require('fs') as typeof import('fs');
 const path = require('path') as typeof import('path');
 const os = require('os') as typeof import('os');
+const crypto = require('crypto') as typeof import('crypto');
 const { spawn, execSync } = require('child_process') as typeof import('child_process');
 
 const { checkPortAvailability } = require('./system-check') as typeof import('./system-check');
@@ -248,8 +249,24 @@ export async function handleStart(
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true });
     }
+
+    // 预生成 gateway token，写入配置并通过环境变量传入
+    // 这样无论 OpenClaw 是否持久化 token，龙虾助手都掌握 token
+    const gatewayToken = crypto.randomBytes(24).toString('hex');
     const existingManagedConfig = readManagedOpenClawConfig(config).config;
-    const mergedOpenClawConfig = mergeOpenClawConfigSections(existingManagedConfig, openclawConfig);
+    const configWithToken = {
+      ...openclawConfig,
+      gateway: {
+        ...((existingManagedConfig.gateway as Record<string, unknown>) || {}),
+        ...((openclawConfig.gateway as Record<string, unknown>) || {}),
+        auth: {
+          ...(((existingManagedConfig.gateway as Record<string, unknown>)?.auth as Record<string, unknown>) || {}),
+          mode: 'token',
+          token: gatewayToken,
+        },
+      },
+    };
+    const mergedOpenClawConfig = mergeOpenClawConfigSections(existingManagedConfig, configWithToken);
     fs.writeFileSync(managedConfigPath, JSON.stringify(mergedOpenClawConfig, null, 2));
     console.log(`[配置] 已写入: ${managedConfigPath}`);
 
@@ -258,6 +275,7 @@ export async function handleStart(
       OPENCLAW_GATEWAY_PORT: String(gatewayPort),
       OPENCLAW_STATE_DIR: getManagedOpenClawStateDir(config),
       OPENCLAW_CONFIG_PATH: managedConfigPath,
+      OPENCLAW_GATEWAY_TOKEN: gatewayToken,
       [provider.envKey]: String(config.apiKey || ''),
     };
 

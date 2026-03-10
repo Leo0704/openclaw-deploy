@@ -135,7 +135,7 @@ export async function ensureManagedSelfInstall(deps: SelfUpdateDeps): Promise<bo
     return false;
   }
 
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' || process.platform === 'win32') {
     return false;
   }
 
@@ -315,9 +315,14 @@ export async function checkSelfUpdate(deps: SelfUpdateDeps): Promise<UpdateResul
       return { checked: true, updated: false, error: '替换文件失败' };
     }
 
-    console.log('  更新完成！正在重启...');
     writeManagedSelfInstallVersion(managedTarget.metadataPath, latestVersion);
 
+    if (process.platform === 'win32') {
+      console.log(`  更新完成！请重新启动龙虾助手以使用新版本 v${latestVersion}`);
+      return { checked: true, updated: true };
+    }
+
+    console.log('  更新完成！正在重启...');
     spawn(currentExe, process.argv.slice(1), {
       detached: true,
       stdio: 'inherit',

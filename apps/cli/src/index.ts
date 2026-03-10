@@ -5,6 +5,26 @@
  * 双击运行 → 自动打开浏览器 → 在网页上操作
  */
 
+// Windows 全局错误处理：防止控制台闪退
+if (process.platform === 'win32') {
+  const waitAndExit = (code: number) => {
+    console.error('\n按回车键退出...');
+    process.stdin.setRawMode?.(false);
+    process.stdin.resume();
+    process.stdin.once('data', () => process.exit(code));
+    // 如果 30 秒没有输入也退出
+    setTimeout(() => process.exit(code), 30000);
+  };
+  process.on('uncaughtException', (err) => {
+    console.error('\n[致命错误]', err.message || err);
+    waitAndExit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('\n[未处理异常]', reason instanceof Error ? reason.message : reason);
+    waitAndExit(1);
+  });
+}
+
 const { spawn } = require('child_process') as typeof import('child_process');
 const fs = require('fs') as typeof import('fs');
 const path = require('path') as typeof import('path');
@@ -196,7 +216,7 @@ type NotificationChannelStatus = import('./openclaw-runtime').NotificationChanne
 type GatewayTokenResolution = import('./openclaw-runtime').GatewayTokenResolution;
 type LogEntry = import('./app-state').LogEntry;
 
-const VERSION = '1.0.39';
+const VERSION = '1.0.40';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
@@ -345,4 +365,15 @@ void bootstrapApp({
   getMirrorReleaseApi,
   buildMirrorDownloadUrl,
   defaultWebPort: DEFAULT_WEB_PORT,
-}).catch(console.error);
+}).catch((err: Error) => {
+  console.error('\n[启动失败]', err.message || err);
+  if (process.platform === 'win32') {
+    console.error('按回车键退出...');
+    process.stdin.setRawMode?.(false);
+    process.stdin.resume();
+    process.stdin.once('data', () => process.exit(1));
+    setTimeout(() => process.exit(1), 30000);
+  } else {
+    process.exit(1);
+  }
+});

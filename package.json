@@ -1,6 +1,6 @@
 {
   "name": "lobster-assistant",
-  "version": "1.0.39",
+  "version": "1.0.40",
   "private": true,
   "description": "龙虾助手 - OpenClaw 一键部署工具",
   "scripts": {

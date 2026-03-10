@@ -68,6 +68,7 @@ export async function fetchWithTimeout<T = unknown>(
   timeout: number = DEFAULT_TIMEOUT
 ): Promise<FetchResult<T>> {
   return new Promise((resolve) => {
+    const effectiveTimeout = options.timeout ?? timeout;
     const parsedUrl = new URL(url);
     const isHttps = parsedUrl.protocol === 'https:';
     const client = isHttps ? https : http;
@@ -78,7 +79,7 @@ export async function fetchWithTimeout<T = unknown>(
       path: parsedUrl.pathname + parsedUrl.search,
       method: options.method || 'GET',
       headers: options.headers || {},
-      timeout,
+      timeout: effectiveTimeout,
     };
 
     // 处理 JSON body
@@ -240,21 +241,17 @@ function sleep(ms: number): Promise<void> {
 export async function checkNetworkConnectivity(
   testUrls: string[] = DEFAULT_CONNECTIVITY_URLS
 ): Promise<NetworkCheckResult[]> {
-  const results: NetworkCheckResult[] = [];
-
-  for (const url of testUrls) {
+  return Promise.all(testUrls.map(async (url) => {
     const startTime = Date.now();
     const result = await fetchWithTimeout(url, { method: 'GET', timeout: 5000 });
     const latency = Date.now() - startTime;
 
-    results.push({
+    return {
       connected: result.success,
       latency: result.success ? latency : undefined,
       error: result.error?.message,
-    });
-  }
-
-  return results;
+    };
+  }));
 }
 
 /**

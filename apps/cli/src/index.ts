@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.26';
+const VERSION = '1.0.27';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -1536,6 +1536,107 @@ function runCommandArgs(
   }
 }
 
+async function runCommandStreaming(
+  cmd: string,
+  cwd: string,
+  options: RunCommandOptions & { env?: NodeJS.ProcessEnv; onLog?: (level: 'info' | 'error', message: string) => void } = {}
+): Promise<RunCommandResult> {
+  const { timeout = 300000, env, onLog } = options;
+
+  return new Promise((resolve) => {
+    const child = spawn(cmd, {
+      cwd,
+      env: env || getCommandLookupEnv(),
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+
+    const flushLines = (buffer: string, level: 'info' | 'error'): string => {
+      const lines = buffer.split(/\r?\n/);
+      const rest = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed) onLog?.(level, trimmed);
+      }
+      return rest;
+    };
+
+    const finish = (result: RunCommandResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      child.kill();
+      finish({
+        success: false,
+        stderr: stderr.trim() || stdout.trim() || `命令执行超时 (${timeout}ms)`,
+        error: createError(ErrorType.PROCESS, 'PROCESS_TIMEOUT', {
+          userMessage: `命令执行超时 (${timeout}ms)`,
+          context: { cmd, cwd, timeout },
+        }),
+      });
+    }, timeout);
+
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk;
+      stdout += text;
+      stdoutBuffer += text;
+      stdoutBuffer = flushLines(stdoutBuffer, 'info');
+    });
+
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk;
+      stderr += text;
+      stderrBuffer += text;
+      stderrBuffer = flushLines(stderrBuffer, 'error');
+    });
+
+    child.once('error', (error: Error) => {
+      clearTimeout(timer);
+      finish({
+        success: false,
+        stderr: error.message,
+        error: createError(ErrorType.PROCESS, 'PROCESS_ERROR', {
+          userMessage: `命令执行失败: ${error.message}`,
+          context: { cmd, cwd },
+        }),
+      });
+    });
+
+    child.once('close', (code: number | null) => {
+      clearTimeout(timer);
+      const lastStdout = stdoutBuffer.trim();
+      const lastStderr = stderrBuffer.trim();
+      if (lastStdout) onLog?.('info', lastStdout);
+      if (lastStderr) onLog?.('error', lastStderr);
+
+      if (code === 0) {
+        finish({ success: true, stdout: stdout.trim(), stderr: stderr.trim() });
+        return;
+      }
+
+      const message = stderr.trim() || stdout.trim() || `命令执行失败 (code: ${code ?? 'unknown'})`;
+      finish({
+        success: false,
+        stdout: stdout.trim(),
+        stderr: message,
+        error: createError(ErrorType.PROCESS, 'PROCESS_ERROR', {
+          userMessage: `命令执行失败: ${message}`,
+          context: { cmd, cwd, exitCode: code },
+        }),
+      });
+    });
+  });
+}
+
 /**
  * 简单版本（向后兼容）
  */
@@ -1617,6 +1718,79 @@ function resolveRemoteDefaultRef(projectPath: string): string {
   return 'origin/main';
 }
 
+const TLON_API_COMMIT = '7eede1c1a756977b09f96aa14a92e2b06318ae87';
+const TLON_API_GITHUB_SPEC = `github:tloncorp/api-beta#${TLON_API_COMMIT}`;
+const TLON_API_GIT_SPEC = `git+https://github.com/tloncorp/api-beta.git#${TLON_API_COMMIT}`;
+const TLON_API_TARBALL = `https://codeload.github.com/tloncorp/api-beta/tar.gz/${TLON_API_COMMIT}`;
+
+type TemporaryPatchResult = {
+  changed: boolean;
+  error?: string;
+  restore: () => void;
+};
+
+function applyTemporaryWindowsTlonPatch(projectPath: string): TemporaryPatchResult {
+  if (os.platform() !== 'win32') {
+    return { changed: false, restore: () => {} };
+  }
+
+  const tlonPackagePath = path.join(projectPath, 'extensions', 'tlon', 'package.json');
+  const lockfilePath = path.join(projectPath, 'pnpm-lock.yaml');
+
+  try {
+    let changed = false;
+    const originals = new Map<string, string>();
+
+    if (fs.existsSync(tlonPackagePath)) {
+      const tlonPackageRaw = fs.readFileSync(tlonPackagePath, 'utf-8');
+      if (tlonPackageRaw.includes(TLON_API_GITHUB_SPEC)) {
+        originals.set(tlonPackagePath, tlonPackageRaw);
+        fs.writeFileSync(tlonPackagePath, tlonPackageRaw.replaceAll(TLON_API_GITHUB_SPEC, TLON_API_GIT_SPEC));
+        changed = true;
+      }
+    }
+
+    if (fs.existsSync(lockfilePath)) {
+      let lockfileRaw = fs.readFileSync(lockfilePath, 'utf-8');
+      const original = lockfileRaw;
+
+      lockfileRaw = lockfileRaw.replaceAll(
+        `specifier: ${TLON_API_GITHUB_SPEC}`,
+        `specifier: ${TLON_API_GIT_SPEC}`
+      );
+      lockfileRaw = lockfileRaw.replaceAll(
+        `version: ${TLON_API_TARBALL}`,
+        `version: ${TLON_API_GIT_SPEC}`
+      );
+      lockfileRaw = lockfileRaw.replaceAll(
+        `'@tloncorp/api@${TLON_API_TARBALL}':`,
+        `'@tloncorp/api@${TLON_API_GIT_SPEC}':`
+      );
+      lockfileRaw = lockfileRaw.replaceAll(
+        `resolution: {tarball: ${TLON_API_TARBALL}}`,
+        `resolution: {commit: ${TLON_API_COMMIT}, repo: https://github.com/tloncorp/api-beta.git, type: git}`
+      );
+
+      if (lockfileRaw !== original) {
+        originals.set(lockfilePath, original);
+        fs.writeFileSync(lockfilePath, lockfileRaw);
+        changed = true;
+      }
+    }
+
+    return {
+      changed,
+      restore: () => {
+        for (const [filePath, content] of originals.entries()) {
+          fs.writeFileSync(filePath, content);
+        }
+      },
+    };
+  } catch (error) {
+    return { changed: false, error: (error as Error).message, restore: () => {} };
+  }
+}
+
 /**
  * 验证 URL 格式
  */
@@ -1685,6 +1859,44 @@ function openBrowser(url: string): { success: boolean; error?: string; fallbackU
 let gatewayProcess: import('child_process').ChildProcess | null = null;
 let gatewayStatus: 'stopped' | 'starting' | 'running' | 'stopping' = 'stopped';
 let logs: Array<{ time: string; level: string; message: string }> = [];
+type LogEntry = { time: string; level: string; message: string };
+type DeployTaskState = 'idle' | 'running' | 'succeeded' | 'failed';
+let deployTask: {
+  state: DeployTaskState;
+  logs: LogEntry[];
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  config?: Record<string, unknown>;
+  status?: ReturnType<typeof getGatewayRuntimeStatus>;
+} = {
+  state: 'idle',
+  logs: [],
+};
+
+function makeLogEntry(level: 'info' | 'success' | 'error' | 'warning', message: string): LogEntry {
+  return { time: new Date().toLocaleTimeString(), level, message };
+}
+
+function appendBufferedLog(target: LogEntry[], level: 'info' | 'success' | 'error' | 'warning', message: string) {
+  target.push(makeLogEntry(level, message));
+  if (target.length > 300) target.shift();
+}
+
+function getDeployTaskSnapshot() {
+  return {
+    success: true,
+    task: {
+      state: deployTask.state,
+      error: deployTask.error || null,
+      startedAt: deployTask.startedAt || null,
+      finishedAt: deployTask.finishedAt || null,
+      logs: deployTask.logs,
+      config: deployTask.config,
+      status: deployTask.status,
+    },
+  };
+}
 
 function getGatewayRuntimeStatus(config: Record<string, unknown>) {
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
@@ -2079,6 +2291,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       selectedModel: defaultModel,
       currentTab: 'status',
       currentView: 'dashboard',
+      deployPolling: false,
+      deployTask: null,
+      pendingDeployPayload: null,
       skillsLoaded: false,
       channelsLoaded: false,
       helpLoaded: false,
@@ -2152,6 +2367,8 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
     function render() {
       state.currentView = 'dashboard';
+      state.deployPolling = false;
+      state.deployTask = null;
       state.pendingDeployPayload = null;
       const card = $('main-card');
       const c = state.config, s = state.status;
@@ -3047,28 +3264,77 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       else toast(res.error || '激活失败', 'error');
     }
 
-    async function executeDeploy(payload) {
+    function renderDeployTask(task) {
+      state.currentView = 'deploy';
       $('main-card').innerHTML = \`
         <h2 class="card-title">📦 部署中...</h2>
         <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
+        <div class="actions" id="deploy-actions" style="margin-top:20px"></div>
       \`;
 
-      const res = await api('deploy', payload, 900000);
-
       const logsEl = $('deploy-logs');
-      if (res.logs) {
-        logsEl.innerHTML = res.logs.map(l => \`<div class="log-line log-\${l.level || 'info'}"><span class="log-time">[\${l.time}]</span> \${l.message}</div>\`).join('');
+      const deployLogs = Array.isArray(task?.logs) ? task.logs : [];
+      logsEl.innerHTML = deployLogs.length
+        ? deployLogs.map(l => \`<div class="log-line log-\${l.level || 'info'}"><span class="log-time">[\${l.time}]</span> \${l.message}</div>\`).join('')
+        : '<div class="log-line log-info">准备部署...</div>';
+
+      const actionsEl = $('deploy-actions');
+      const taskState = task?.state || 'idle';
+      if (taskState === 'succeeded') {
+        actionsEl.innerHTML = '<button class="btn btn-primary" onclick="render()">进入控制面板</button>';
+      } else if (taskState === 'failed') {
+        actionsEl.innerHTML = '<button class="btn btn-primary" onclick="render()">返回重试</button>';
+      } else {
+        actionsEl.innerHTML = '<button class="btn btn-secondary" disabled>部署进行中...</button>';
+      }
+    }
+
+    async function pollDeployTask() {
+      if (!state.deployPolling) return;
+
+      const res = await api('deploy-status', {}, 30000);
+      if (!state.deployPolling) return;
+
+      if (!res.success || !res.task) {
+        state.deployPolling = false;
+        toast(res.error || '无法获取部署状态', 'error');
+        return;
       }
 
-      if (res.success) {
-        state.config = res.config;
-        state.status = res.status;
-        logsEl.innerHTML += '<div class="log-line log-success" style="margin-top:16px">🎉 部署完成！</div>';
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">进入控制面板</button></div>';
-      } else {
-        logsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 部署失败: ' + (res.error || '未知错误') + '</div>';
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">重试</button></div>';
+      state.deployTask = res.task;
+      renderDeployTask(res.task);
+
+      if (res.task.config) {
+        state.config = res.task.config;
       }
+      if (res.task.status) {
+        state.status = res.task.status;
+      }
+
+      if (res.task.state === 'running') {
+        setTimeout(pollDeployTask, 1500);
+        return;
+      }
+
+      state.deployPolling = false;
+      if (res.task.state === 'succeeded') {
+        toast('部署完成！');
+      } else if (res.task.state === 'failed') {
+        toast(res.task.error || '部署失败', 'error');
+      }
+    }
+
+    async function executeDeploy(payload) {
+      const res = await api('deploy-start', payload, 30000);
+      if (!res.success) {
+        showError('部署启动失败', res.error || '未知错误');
+        return;
+      }
+
+      state.deployTask = res.task || null;
+      state.deployPolling = true;
+      renderDeployTask(state.deployTask || { state: 'running', logs: [] });
+      await pollDeployTask();
     }
 
     function hasActionablePrecheckRecovery(health) {
@@ -3596,7 +3862,11 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
       return handleConfigAsync(data, config);
 
     case 'deploy':
-      return handleDeploy(data, config);
+    case 'deploy-start':
+      return handleDeployStart(data, config);
+
+    case 'deploy-status':
+      return getDeployTaskSnapshot();
 
     case 'test-connection':
       return handleTestConnection(data, config);
@@ -3711,30 +3981,43 @@ function handleAPI(action: string, data: Record<string, unknown>, config: Record
 // 部署处理（带健康检查和回滚）
 // ============================================
 
-async function handleDeploy(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function performDeployTask(data: Record<string, unknown>, baseConfig: Record<string, unknown>): Promise<Record<string, unknown>> {
   const installPath = (data.installPath as string) || path.join(os.homedir(), 'openclaw');
   const gatewayPort = (data.gatewayPort as number) || DEFAULT_GATEWAY_PORT;
-  logs = [];
+  const config = { ...baseConfig };
 
   const addLog = (msg: string, level: 'info' | 'success' | 'error' | 'warning' = 'info') => {
-    appendLog(level, msg);
+    appendBufferedLog(deployTask.logs, level, msg);
     console.log(`[部署] ${msg}`);
+  };
+
+  const streamCommand = async (
+    command: string,
+    cwd: string,
+    options: { timeout?: number; ignoreError?: boolean } = {}
+  ) => {
+    const result = await runCommandStreaming(command, cwd, {
+      timeout: options.timeout,
+      onLog: (level, message) => addLog(message, level === 'error' ? 'error' : 'info'),
+    });
+    if (!result.success && !options.ignoreError) {
+      throw new Error(result.stderr || result.error?.userMessage || '命令执行失败');
+    }
+    return result;
   };
 
   try {
     addLog('开始部署...');
 
-    // 1. 基本验证
     if (!data.apiKey) {
       addLog('错误: 未提供 API Key', 'error');
-      return { success: false, error: '请输入 API Key', logs };
+      return { success: false, error: '请输入 API Key' };
     }
     if (!data.model) {
       addLog('错误: 未选择模型', 'error');
-      return { success: false, error: '请选择模型', logs };
+      return { success: false, error: '请选择模型' };
     }
 
-    // 2. 一次性预检
     addLog('执行部署前预检...');
     const precheck = await performHealthChecks({
       installPath,
@@ -3742,37 +4025,34 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
       requiredDiskSpace: 500 * 1024 * 1024,
     });
     precheck.checks.forEach((check) => {
-      addLog(`[预检] ${check.name}: ${check.message}`, check.passed ? 'success' : check.severity === 'warning' ? 'warning' : 'error');
+      addLog(
+        `[预检] ${check.name}: ${check.message}`,
+        check.passed ? 'success' : check.severity === 'warning' ? 'warning' : 'error'
+      );
     });
     if (precheck.errors.length > 0) {
-      return { success: false, error: precheck.errors[0], logs };
+      return { success: false, error: precheck.errors[0] };
     }
 
-    // 3. 检查依赖并自动补齐可恢复项
     addLog('检查系统依赖...');
     const deps = checkDependencies();
     if (!deps.node.valid) {
       addLog(`错误: Node.js 版本过低 (当前: v${deps.node.version}, 需要: v${OPENCLAW_MIN_NODE_VERSION})`, 'error');
-      return { success: false, error: `Node.js 版本过低，请升级到 v${OPENCLAW_MIN_NODE_VERSION} 或更高版本`, logs };
+      return { success: false, error: `Node.js 版本过低，请升级到 v${OPENCLAW_MIN_NODE_VERSION} 或更高版本` };
     }
     if (!deps.git) {
       const gitInstall = ensureDependencyInstalled('git', addLog);
       if (!gitInstall.success) {
-        return {
-          success: false,
-          error: gitInstall.manual || '未找到 Git，请先安装 Git 后重试',
-          logs,
-        };
+        return { success: false, error: gitInstall.manual || '未找到 Git，请先安装 Git 后重试' };
       }
     }
     if (!deps.npm) {
       addLog('错误: 未找到 npm', 'error');
-      return { success: false, error: '未找到 npm，请先安装 Node.js: https://nodejs.org', logs };
+      return { success: false, error: '未找到 npm，请先安装 Node.js: https://nodejs.org' };
     }
     let pnpmAvailable = deps.pnpm;
     addLog(`依赖检查通过 ✓ (Node: v${deps.node.version}, Git: ✓, npm: ✓, pnpm: ${pnpmAvailable ? '✓' : '✗'})`, 'success');
 
-    // 4. 保存配置
     config.provider = data.provider || 'anthropic';
     config.model = data.model;
     config.apiKey = data.apiKey;
@@ -3785,45 +4065,40 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
     if (data.contextWindow !== undefined) config.contextWindow = data.contextWindow;
     if (data.maxTokens !== undefined) config.maxTokens = data.maxTokens;
 
-    // 5. 克隆/更新仓库（支持镜像源自动切换）
     if (!fs.existsSync(installPath)) {
       let cloneSuccess = false;
-
-      // 尝试多个镜像源
       for (let i = 0; i < GITHUB_MIRRORS.length; i++) {
         const mirror = GITHUB_MIRRORS[i];
         const repoUrl = getMirrorRepo(i);
-
         addLog(`尝试克隆 (${mirror.name})...`);
-
-        const cloneResult = runCommand(`git clone --depth 1 ${repoUrl} "${installPath}"`, process.cwd(), {
-          timeout: 300000, // 5分钟
+        const cloneResult = await streamCommand(`git clone --depth 1 ${repoUrl} "${installPath}"`, process.cwd(), {
+          timeout: 300000,
+          ignoreError: true,
         });
 
         if (cloneResult.success) {
           addLog(`仓库克隆成功 ✓ (使用: ${mirror.name})`, 'success');
           cloneSuccess = true;
           break;
-        } else {
-          addLog(`${mirror.name} 克隆失败，尝试下一个...`, 'warning');
-          // 清理失败的目录
-          if (fs.existsSync(installPath)) {
-            try {
-              fs.rmSync(installPath, { recursive: true, force: true });
-            } catch {}
-          }
+        }
+
+        addLog(`${mirror.name} 克隆失败，尝试下一个...`, 'warning');
+        if (fs.existsSync(installPath)) {
+          try {
+            fs.rmSync(installPath, { recursive: true, force: true });
+          } catch {}
         }
       }
 
       if (!cloneSuccess) {
         addLog('所有镜像源均克隆失败，请检查网络', 'error');
-        return { success: false, error: '网络连接失败，请检查网络后重试', logs };
+        return { success: false, error: '网络连接失败，请检查网络后重试' };
       }
     } else {
       const existingStat = fs.statSync(installPath);
       if (!existingStat.isDirectory()) {
         addLog('错误: 安装路径指向一个文件', 'error');
-        return { success: false, error: '安装路径指向一个文件，请改成目录路径', logs };
+        return { success: false, error: '安装路径指向一个文件，请改成目录路径' };
       }
       if (!isOpenClawProjectDir(installPath)) {
         const existingEntries = fs.readdirSync(installPath);
@@ -3834,8 +4109,9 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
             const mirror = GITHUB_MIRRORS[i];
             const repoUrl = getMirrorRepo(i);
             addLog(`尝试克隆 (${mirror.name})...`);
-            const cloneResult = runCommand(`git clone --depth 1 ${repoUrl} "${installPath}"`, process.cwd(), {
+            const cloneResult = await streamCommand(`git clone --depth 1 ${repoUrl} "${installPath}"`, process.cwd(), {
               timeout: 300000,
+              ignoreError: true,
             });
             if (cloneResult.success) {
               addLog(`仓库克隆成功 ✓ (使用: ${mirror.name})`, 'success');
@@ -3846,72 +4122,115 @@ async function handleDeploy(data: Record<string, unknown>, config: Record<string
           }
           if (!cloneSuccess) {
             addLog('所有镜像源均克隆失败，请检查网络', 'error');
-            return { success: false, error: '网络连接失败，请检查网络后重试', logs };
+            return { success: false, error: '网络连接失败，请检查网络后重试' };
           }
         } else {
           addLog('错误: 目录已存在，但不是 OpenClaw 项目目录', 'error');
-          return { success: false, error: '安装路径已存在且不是 OpenClaw 项目，请换一个空目录或正确的 OpenClaw 目录', logs };
+          return { success: false, error: '安装路径已存在且不是 OpenClaw 项目，请换一个空目录或正确的 OpenClaw 目录' };
         }
       } else {
-      addLog('目录已存在，更新中...');
-      const pullResult = runCommand('git pull', installPath, { ignoreError: true });
-      if (pullResult.success) {
-        addLog('更新成功 ✓', 'success');
-      } else {
-        addLog('更新失败，使用现有代码', 'warning');
-      }
+        addLog('目录已存在，更新中...');
+        const pullResult = await streamCommand('git pull', installPath, {
+          timeout: 300000,
+          ignoreError: true,
+        });
+        if (pullResult.success) {
+          addLog('更新成功 ✓', 'success');
+        } else {
+          addLog('更新失败，使用现有代码', 'warning');
+        }
       }
     }
 
     const projectPackageManager = detectProjectPackageManager(installPath);
+    const tlonPatch = applyTemporaryWindowsTlonPatch(installPath);
+    if (tlonPatch.error) {
+      addLog(`Windows Tlon 依赖补丁应用失败: ${tlonPatch.error}`, 'warning');
+    } else if (tlonPatch.changed) {
+      addLog('已应用临时 Windows Tlon 依赖兼容补丁，安装结束后会自动恢复仓库文件', 'warning');
+    }
+
     if (projectPackageManager === 'pnpm' && !pnpmAvailable) {
       const pnpmInstall = ensureDependencyInstalled('pnpm', addLog);
       if (!pnpmInstall.success) {
-        return {
-          success: false,
-          error: pnpmInstall.manual || '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后重试',
-          logs,
-        };
+        return { success: false, error: pnpmInstall.manual || '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后重试' };
       }
       pnpmAvailable = true;
     }
 
-    // 6. 安装依赖
-    const installPlan = getInstallCommand(installPath);
-    addLog(`安装依赖 (${installPlan.pm})...`);
-    const installResult = runCommand(installPlan.command, installPath, {
-      timeout: 600000, // 10分钟
-      retries: 2,
-    });
-    if (!installResult.success) {
-      addLog(`依赖安装失败: ${installResult.stderr}`, 'error');
-      return { success: false, error: installResult.stderr || '依赖安装失败', logs };
+    try {
+      const installPlan = getInstallCommand(installPath);
+      addLog(`安装依赖 (${installPlan.pm})...`);
+      const installResult = await streamCommand(installPlan.command, installPath, {
+        timeout: 600000,
+        ignoreError: true,
+      });
+      if (!installResult.success) {
+        addLog(`依赖安装失败: ${installResult.stderr}`, 'error');
+        return { success: false, error: installResult.stderr || '依赖安装失败' };
+      }
+      addLog('依赖安装成功 ✓', 'success');
+    } finally {
+      if (tlonPatch.changed) {
+        tlonPatch.restore();
+        addLog('已恢复临时 Windows Tlon 依赖补丁，仓库工作树保持干净', 'info');
+      }
     }
-    addLog('依赖安装成功 ✓', 'success');
 
-    // 7. 构建
     addLog('构建项目...');
     const buildPlan = getBuildCommand(installPath);
-    const buildResult = runCommand(buildPlan.command, installPath, { ignoreError: true, timeout: 300000 });
+    const buildResult = await streamCommand(buildPlan.command, installPath, {
+      timeout: 300000,
+      ignoreError: true,
+    });
     if (buildResult.success) {
       addLog('构建成功 ✓', 'success');
     } else {
       addLog('构建跳过（可能无构建脚本）', 'warning');
     }
 
-    // 8. 保存最终配置
     config.installPath = installPath;
     saveConfig(config);
-
     addLog('🎉 部署完成！', 'success');
 
-    return { success: true, config, status: getGatewayRuntimeStatus(config), logs };
+    return { success: true, config, status: getGatewayRuntimeStatus(config) };
   } catch (e) {
     const error = e as Error;
     addLog(`❌ 部署失败: ${error.message}`, 'error');
     logError(error, 'deploy');
-    return { success: false, error: getUserFriendlyMessage(error), logs };
+    return { success: false, error: getUserFriendlyMessage(error) };
   }
+}
+
+function handleDeployStart(data: Record<string, unknown>, baseConfig: Record<string, unknown>): Record<string, unknown> {
+  if (deployTask.state === 'running') {
+    return { success: false, error: '已有部署任务正在进行，请等待当前任务结束' };
+  }
+
+  deployTask = {
+    state: 'running',
+    logs: [],
+    startedAt: new Date().toISOString(),
+  };
+
+  void performDeployTask(data, baseConfig).then((result) => {
+    deployTask.state = result.success ? 'succeeded' : 'failed';
+    deployTask.error = result.success ? undefined : String(result.error || '部署失败');
+    deployTask.finishedAt = new Date().toISOString();
+    if (result.config) {
+      deployTask.config = result.config as Record<string, unknown>;
+    }
+    if (result.status) {
+      deployTask.status = result.status as ReturnType<typeof getGatewayRuntimeStatus>;
+    }
+  }).catch((error: Error) => {
+    appendBufferedLog(deployTask.logs, 'error', `❌ 部署失败: ${error.message}`);
+    deployTask.state = 'failed';
+    deployTask.error = error.message;
+    deployTask.finishedAt = new Date().toISOString();
+  });
+
+  return getDeployTaskSnapshot();
 }
 
 // ============================================

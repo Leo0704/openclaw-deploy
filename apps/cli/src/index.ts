@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.29';
+const VERSION = '1.0.30';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -1679,6 +1679,29 @@ function parseCommandForSpawn(command: string): { file: string; args: string[] }
   };
 }
 
+function resolveSpawnExecutable(file: string): string {
+  if (!file || os.platform() !== 'win32' || /\.[A-Za-z0-9]+$/.test(file) || path.isAbsolute(file)) {
+    return file;
+  }
+
+  const resolved = runCommandArgs('where', process.cwd(), {
+    args: [file],
+    ignoreError: true,
+    silent: true,
+  });
+
+  if (!resolved.success || !resolved.stdout) {
+    return file;
+  }
+
+  const firstMatch = resolved.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  return firstMatch || file;
+}
+
 function getManagedOpenClawEnv(config: Record<string, unknown>): NodeJS.ProcessEnv {
   return {
     ...getCommandLookupEnv(),
@@ -2288,8 +2311,11 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       deployTask: null,
       pendingDeployPayload: null,
       skillsLoaded: false,
+      skillsLoading: false,
       channelsLoaded: false,
+      channelsLoading: false,
       helpLoaded: false,
+      helpLoading: false,
       channelsData: null,
       customWizard: {
         verified: false,
@@ -2642,18 +2668,28 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         </div>
       \`;
 
-      // 初始化 Tab 数据
-      if (state.currentTab === 'skills' && !state.skillsLoaded) {
-        loadSkills();
-      }
-      if (state.currentTab === 'channels' && !state.channelsLoaded) {
-        loadChannels();
-      }
-      if (state.currentTab === 'help' && !state.helpLoaded) {
-        loadHelp();
-      }
-
       if (s.running && (state.currentTab === 'status' || !state.currentTab)) pollLogs();
+      if (state.currentTab === 'channels') {
+        if (state.channelsLoaded && state.channelsData) {
+          renderChannels();
+        } else {
+          queueTabDataLoad('channels');
+        }
+      }
+      if (state.currentTab === 'skills') {
+        if (state.skillsLoaded) {
+          renderInstalledSkills();
+        } else {
+          queueTabDataLoad('skills');
+        }
+      }
+      if (state.currentTab === 'help') {
+        if (state.helpLoaded) {
+          loadHelp();
+        } else {
+          queueTabDataLoad('help');
+        }
+      }
     }
 
     function renderProviderOptions() {
@@ -2695,9 +2731,25 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     // Tab 切换
     // ============================================
 
+    function queueTabDataLoad(tab) {
+      setTimeout(() => {
+        if (state.currentTab !== tab || state.currentView !== 'dashboard') return;
+        if (tab === 'skills' && !state.skillsLoaded && !state.skillsLoading) {
+          loadSkills();
+        }
+        if (tab === 'channels' && !state.channelsLoaded && !state.channelsLoading) {
+          loadChannels();
+        }
+        if (tab === 'help' && !state.helpLoaded && !state.helpLoading) {
+          loadHelp();
+        }
+      }, 0);
+    }
+
     function switchTab(tab) {
       state.currentTab = tab;
       render();
+      queueTabDataLoad(tab);
     }
 
     // ============================================
@@ -2705,7 +2757,13 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     // ============================================
 
     async function loadChannels() {
+      state.channelsLoading = true;
+      const contentEl = $('channels-content');
+      if (contentEl) {
+        contentEl.innerHTML = '<div style="text-align:center;padding:20px;color:#9CA3AF;">正在加载通知渠道...</div>';
+      }
       const res = await api('channels/status');
+      state.channelsLoading = false;
       if (!res.success) {
         toast(res.error || '无法读取通知配置', 'error');
         return;
@@ -2717,6 +2775,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
     async function refreshChannels() {
       state.channelsLoaded = false;
+      state.channelsData = null;
       await loadChannels();
     }
 
@@ -2958,8 +3017,14 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     let installedSkills = [];
 
     async function loadSkills() {
+      state.skillsLoading = true;
+      const el = $('installed-skills');
+      if (el) {
+        el.innerHTML = '<div style="text-align:center;padding:20px;color:#9CA3AF;">正在加载技能列表...</div>';
+      }
       await refreshInstalledSkills();
       state.skillsLoaded = true;
+      state.skillsLoading = false;
     }
 
     async function refreshInstalledSkills() {
@@ -2968,6 +3033,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         installedSkills = Array.isArray(installedRes.skills) ? installedRes.skills : [];
         renderInstalledSkills();
       } else {
+        state.skillsLoading = false;
         toast(installedRes.error || '无法读取已安装技能', 'error');
       }
     }
@@ -3041,6 +3107,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     // ============================================
 
     async function loadHelp() {
+      state.helpLoading = true;
       const el = $('tab-help');
       if (!el) return;
 
@@ -3247,6 +3314,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       \`;
 
       state.helpLoaded = true;
+      state.helpLoading = false;
     }
 
     async function activate() {
@@ -4665,6 +4733,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
       gatewayStatus = 'stopped';
       return { success: false, error: '无法解析 OpenClaw 启动命令' };
     }
+    parsedCommand.file = resolveSpawnExecutable(parsedCommand.file);
 
     const processRef = spawn(parsedCommand.file, parsedCommand.args, {
       cwd: config.installPath as string,

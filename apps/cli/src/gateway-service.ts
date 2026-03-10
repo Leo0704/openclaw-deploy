@@ -1,6 +1,7 @@
 const fs = require('fs') as typeof import('fs');
 const path = require('path') as typeof import('path');
-const { spawn } = require('child_process') as typeof import('child_process');
+const os = require('os') as typeof import('os');
+const { spawn, execSync } = require('child_process') as typeof import('child_process');
 
 const { checkPortAvailability } = require('./system-check') as typeof import('./system-check');
 const {
@@ -102,9 +103,17 @@ export async function stopGatewayProcess(
     processRef.once('error', onError);
 
     try {
-      const killed = processRef.kill();
-      if (!killed) {
-        finish({ ok: false, error: '停止信号发送失败，请稍后重试' });
+      if (os.platform() === 'win32' && processRef.pid) {
+        try {
+          execSync(`taskkill /F /T /PID ${processRef.pid}`, { stdio: 'ignore' });
+        } catch {
+          processRef.kill();
+        }
+      } else {
+        const killed = processRef.kill();
+        if (!killed) {
+          finish({ ok: false, error: '停止信号发送失败，请稍后重试' });
+        }
       }
     } catch (error) {
       finish({ ok: false, error: `停止失败: ${(error as Error).message}` });
@@ -262,10 +271,11 @@ export async function handleStart(
     }
     parsedCommand.file = resolveSpawnExecutable(parsedCommand.file);
 
+    const isWin = os.platform() === 'win32';
     const processRef = spawn(parsedCommand.file, parsedCommand.args, {
       cwd: config.installPath as string,
       env,
-      shell: false,
+      shell: isWin,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     deps.setGatewayProcess(processRef);
@@ -369,7 +379,11 @@ export async function handleStart(
       }
       if (!processRef.killed) {
         try {
-          processRef.kill();
+          if (os.platform() === 'win32' && processRef.pid) {
+            execSync(`taskkill /F /T /PID ${processRef.pid}`, { stdio: 'ignore' });
+          } else {
+            processRef.kill();
+          }
         } catch {}
       }
       deps.setGatewayStatus('stopped');

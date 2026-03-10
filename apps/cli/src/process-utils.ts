@@ -278,10 +278,15 @@ export function resolveSpawnExecutable(file: string): string {
     return file;
   }
 
-  const firstMatch = resolved.stdout
+  const matches = resolved.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find(Boolean);
+    .filter(Boolean);
 
-  return firstMatch || file;
+  // On Windows prefer .exe > .cmd > .bat > others (avoid extensionless unix scripts)
+  const preferred = matches.find(m => /\.exe$/i.test(m))
+    || matches.find(m => /\.(cmd|bat)$/i.test(m))
+    || matches[0];
+
+  return preferred || file;
 }

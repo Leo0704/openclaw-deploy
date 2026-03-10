@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.30';
+const VERSION = '1.0.31';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -614,16 +614,24 @@ function getOpenClawConfigPath(): string {
   return path.join(os.homedir(), '.openclaw', 'openclaw.json');
 }
 
-function readOpenClawRuntimeConfig(): Record<string, unknown> {
-  return readJsonFile(getOpenClawConfigPath()) || {};
-}
-
 function getManagedOpenClawConfigPath(config: Record<string, unknown>): string {
   const installPath = String(config.installPath || '').trim();
   if (installPath && isOpenClawProjectDir(installPath)) {
     return path.join(installPath, '.claude', 'openclaw.json');
   }
   return getOpenClawConfigPath();
+}
+
+function getManagedOpenClawStateDir(config: Record<string, unknown>): string {
+  const installPath = String(config.installPath || '').trim();
+  if (installPath && isOpenClawProjectDir(installPath)) {
+    return path.join(installPath, '.claude', 'state');
+  }
+  return path.join(os.homedir(), '.openclaw');
+}
+
+function getManagedOpenClawSkillsDir(config: Record<string, unknown>): string {
+  return path.join(getManagedOpenClawStateDir(config), 'skills');
 }
 
 function readManagedOpenClawConfig(config: Record<string, unknown>): {
@@ -638,6 +646,13 @@ function readManagedOpenClawConfig(config: Record<string, unknown>): {
     exists: !!parsed,
     config: parsed || {},
   };
+}
+
+function readOpenClawRuntimeConfig(config?: Record<string, unknown>): Record<string, unknown> {
+  if (config) {
+    return readManagedOpenClawConfig(config).config;
+  }
+  return readJsonFile(getOpenClawConfigPath()) || {};
 }
 
 function writeManagedOpenClawConfig(config: Record<string, unknown>, nextConfig: Record<string, unknown>) {
@@ -698,12 +713,15 @@ function mergeOpenClawConfigSections(
   return merged;
 }
 
-function resolveOpenClawWorkspaceDir(): string {
-  const cfg = readOpenClawRuntimeConfig();
+function resolveOpenClawWorkspaceDir(config?: Record<string, unknown>): string {
+  const cfg = readOpenClawRuntimeConfig(config);
   const agents = cfg.agents as Record<string, unknown> | undefined;
   const defaults = agents?.defaults as Record<string, unknown> | undefined;
   const configured = String(defaults?.workspace || '').trim();
-  return configured ? path.resolve(configured) : path.join(os.homedir(), '.openclaw', 'workspace');
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return config ? path.join(getManagedOpenClawStateDir(config), 'workspace') : path.join(os.homedir(), '.openclaw', 'workspace');
 }
 
 function mapOpenClawSkillSource(source: string, bundled?: boolean): { source: string; removable: boolean } {
@@ -907,7 +925,7 @@ function getOpenClawGatewayChannelsReport(
 
   const projectPath = config.installPath as string;
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
-  const gatewayToken = readGatewayTokenFromHome();
+  const gatewayToken = readGatewayToken(config);
   if (!gatewayToken) {
     return null;
   }
@@ -1020,8 +1038,8 @@ function getInstalledOpenClawSkills(config: Record<string, unknown>): InstalledS
     return [];
   }
 
-  const workspaceDir = resolveOpenClawWorkspaceDir();
-  const runtimeConfig = readOpenClawRuntimeConfig();
+  const workspaceDir = resolveOpenClawWorkspaceDir(config);
+  const runtimeConfig = readOpenClawRuntimeConfig(config);
   const skills = runtimeConfig.skills as Record<string, unknown> | undefined;
   const load = skills?.load as Record<string, unknown> | undefined;
   const extraDirs = Array.isArray(load?.extraDirs)
@@ -1032,7 +1050,7 @@ function getInstalledOpenClawSkills(config: Record<string, unknown>): InstalledS
 
   const sources: Array<{ dir: string; source: string; removable: boolean }> = [
     { dir: path.join(config.installPath as string, 'skills'), source: 'OpenClaw 内置', removable: false },
-    { dir: path.join(os.homedir(), '.openclaw', 'skills'), source: 'OpenClaw 已管理', removable: true },
+    { dir: getManagedOpenClawSkillsDir(config), source: 'OpenClaw 已管理', removable: true },
     { dir: path.join(os.homedir(), '.agents', 'skills'), source: '个人 .agents', removable: true },
     { dir: path.join(workspaceDir, '.agents', 'skills'), source: '项目 .agents', removable: true },
     { dir: path.join(workspaceDir, 'skills'), source: '工作区', removable: true },
@@ -1056,7 +1074,7 @@ async function getInstalledOpenClawSkillsFromStatus(config: Record<string, unkno
 
   const projectPath = config.installPath as string;
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
-  const gatewayToken = readGatewayTokenFromHome();
+  const gatewayToken = readGatewayToken(config);
 
   if (gatewayToken) {
     const gatewayCall = buildGatewayCallCommand(projectPath, gatewayPort, gatewayToken, 'skills.status', {});
@@ -1101,7 +1119,7 @@ function getOpenClawGatewaySkillReport(config: Record<string, unknown>): OpenCla
   }
   const projectPath = config.installPath as string;
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
-  const gatewayToken = readGatewayTokenFromHome();
+  const gatewayToken = readGatewayToken(config);
   if (!gatewayToken) {
     return null;
   }
@@ -1131,7 +1149,7 @@ async function getGatewayHealthStatus(config: Record<string, unknown>): Promise<
   return !!result.success;
 }
 
-async function getGatewayRuntimeStatusAsync(config: Record<string, unknown>) {
+async function getGatewayRuntimeStatusAsync(config: Record<string, unknown>): Promise<ReturnType<typeof getGatewayRuntimeStatus>> {
   const base = getGatewayRuntimeStatus(config);
   const healthy = await getGatewayHealthStatus(config);
   if (healthy) {
@@ -1153,12 +1171,12 @@ function resolveRemovableSkillPath(config: Record<string, unknown>, skillId: str
     return null;
   }
 
-  const workspaceDir = resolveOpenClawWorkspaceDir();
+  const workspaceDir = resolveOpenClawWorkspaceDir(config);
   const candidates = [
     { path: path.join(workspaceDir, 'skills', skillId), source: '工作区' },
     { path: path.join(workspaceDir, '.agents', 'skills', skillId), source: '项目 .agents' },
     { path: path.join(os.homedir(), '.agents', 'skills', skillId), source: '个人 .agents' },
-    { path: path.join(os.homedir(), '.openclaw', 'skills', skillId), source: 'OpenClaw 已管理' },
+    { path: path.join(getManagedOpenClawSkillsDir(config), skillId), source: 'OpenClaw 已管理' },
   ];
 
   for (const candidate of candidates) {
@@ -1218,13 +1236,17 @@ function getOpenClawStartCommand(projectPath: string, port: number): string {
     : `npm run openclaw -- gateway run --port ${port} --allow-unconfigured`;
 }
 
-function readGatewayTokenFromHome(): string | null {
-  const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-  const configJson = readJsonFile(configPath);
+function readGatewayToken(config?: Record<string, unknown>): string | null {
+  const envSource = config ? getManagedOpenClawEnv(config) : process.env;
+  const envToken = String(envSource.OPENCLAW_GATEWAY_TOKEN || envSource.CLAWDBOT_GATEWAY_TOKEN || '').trim();
+  if (envToken) {
+    return envToken;
+  }
+
+  const configJson = readOpenClawRuntimeConfig(config);
   const gateway = configJson?.gateway as Record<string, unknown> | undefined;
   const auth = gateway?.auth as Record<string, unknown> | undefined;
-  const token = String(auth?.token || '').trim();
-  return token || null;
+  return typeof auth?.token === 'string' ? auth.token.trim() || null : null;
 }
 
 function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; error?: string } {
@@ -1705,8 +1727,32 @@ function resolveSpawnExecutable(file: string): string {
 function getManagedOpenClawEnv(config: Record<string, unknown>): NodeJS.ProcessEnv {
   return {
     ...getCommandLookupEnv(),
+    OPENCLAW_STATE_DIR: getManagedOpenClawStateDir(config),
     OPENCLAW_CONFIG_PATH: getManagedOpenClawConfigPath(config),
   };
+}
+
+function choosePreferredSkillInstallOption(
+  options: Array<Record<string, unknown>>
+): Record<string, unknown> | undefined {
+  if (!Array.isArray(options) || options.length === 0) {
+    return undefined;
+  }
+
+  const ranked = options
+    .map((option, index) => {
+      const kind = String(option.kind || '').trim();
+      let score = 100 + index;
+      if (kind === 'node' && (checkCommand('pnpm') || checkCommand('npm'))) score = 10 + index;
+      else if (kind === 'brew' && process.platform === 'darwin' && checkCommand('brew')) score = 20 + index;
+      else if (kind === 'uv' && checkCommand('uv')) score = 30 + index;
+      else if (kind === 'go' && checkCommand('go')) score = 40 + index;
+      else if (kind === 'download') score = 90 + index;
+      return { option, score };
+    })
+    .sort((a, b) => a.score - b.score);
+
+  return ranked[0]?.option;
 }
 
 function resolveRemoteDefaultRef(projectPath: string): string {
@@ -1914,7 +1960,14 @@ function getDeployTaskSnapshot() {
   };
 }
 
-function getGatewayRuntimeStatus(config: Record<string, unknown>) {
+function getGatewayRuntimeStatus(config: Record<string, unknown>): {
+  installed: boolean;
+  running: boolean;
+  state: 'running' | 'stopped' | 'starting' | 'stopping';
+  gatewayPort: number;
+  gatewayToken: string | null;
+  gatewayUrl: string;
+} {
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
   const installPath = String(config.installPath || '');
   return {
@@ -1922,9 +1975,77 @@ function getGatewayRuntimeStatus(config: Record<string, unknown>) {
     running: gatewayStatus === 'running' || gatewayStatus === 'starting',
     state: gatewayStatus,
     gatewayPort,
-    gatewayToken: readGatewayTokenFromHome(),
+    gatewayToken: readGatewayToken(config),
     gatewayUrl: `http://localhost:${gatewayPort}/`,
   };
+}
+
+async function stopGatewayProcess(config: Record<string, unknown>, timeoutMs: number = 10000): Promise<Record<string, unknown>> {
+  if (!gatewayProcess) {
+    const externallyRunning = await getGatewayHealthStatus(config);
+    if (externallyRunning) {
+      gatewayStatus = 'running';
+      return {
+        success: false,
+        error: '检测到 OpenClaw 仍在运行，但不是由当前龙虾助手进程启动。请先关闭外部实例后再试。',
+      };
+    }
+    gatewayStatus = 'stopped';
+    return { success: true };
+  }
+
+  const processRef = gatewayProcess;
+  gatewayStatus = 'stopping';
+
+  const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve({ ok: false, error: '等待 OpenClaw 进程退出超时，请稍后重试' });
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      processRef.off('exit', onExit);
+      processRef.off('error', onError);
+    };
+
+    const finish = (next: { ok: boolean; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(next);
+    };
+
+    const onExit = () => finish({ ok: true });
+    const onError = (err: Error) => finish({ ok: false, error: err.message });
+
+    processRef.once('exit', onExit);
+    processRef.once('error', onError);
+
+    try {
+      const killed = processRef.kill();
+      if (!killed) {
+        finish({ ok: false, error: '停止信号发送失败，请稍后重试' });
+      }
+    } catch (error) {
+      finish({ ok: false, error: `停止失败: ${(error as Error).message}` });
+    }
+  });
+
+  if (!result.ok) {
+    if (gatewayProcess === processRef) {
+      gatewayStatus = 'running';
+    }
+    return { success: false, error: result.error || '停止失败' };
+  }
+
+  if (gatewayProcess === processRef) {
+    gatewayProcess = null;
+  }
+  gatewayStatus = 'stopped';
+  appendLog('info', '服务已停止');
+  return { success: true };
 }
 
 // ============================================
@@ -3985,6 +4106,9 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
     case 'start':
       return handleStart(config);
 
+    case 'stop':
+      return stopGatewayProcess(config);
+
     case 'status':
       return { success: true, status: await getGatewayRuntimeStatusAsync(config) };
 
@@ -4012,6 +4136,9 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
     case 'channels/save-feishu':
       return handleSaveFeishuChannel(data, config);
 
+    case 'uninstall-openclaw':
+      return handleUninstallOpenClaw(config);
+
     default:
       // 其他操作使用同步处理
       return handleAPI(action, data, config);
@@ -4020,17 +4147,11 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
 
 function handleAPI(action: string, data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
   switch (action) {
-    case 'stop':
-      return handleStop();
-
     case 'logs':
       return { success: true, logs };
 
     case 'update-openclaw':
       return handleUpdateOpenClaw(config);
-
-    case 'uninstall-openclaw':
-      return handleUninstallOpenClaw(config);
 
     case 'system-info':
       return {
@@ -4713,6 +4834,7 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
     const env: NodeJS.ProcessEnv = {
       ...getCommandLookupEnv(),
       PORT: String(gatewayPort),
+      OPENCLAW_STATE_DIR: getManagedOpenClawStateDir(config),
       OPENCLAW_CONFIG_PATH: managedConfigPath,
       [provider.envKey]: String(config.apiKey || ''),
       OPENAI_BASE_URL: baseUrl,
@@ -4820,28 +4942,6 @@ async function handleStart(config: Record<string, unknown>): Promise<Record<stri
 // 停止处理
 // ============================================
 
-function handleStop(): Record<string, unknown> {
-  if (gatewayProcess) {
-    try {
-      gatewayStatus = 'stopping';
-      const processRef = gatewayProcess;
-      const killed = processRef.kill();
-      if (!killed) {
-        gatewayStatus = 'running';
-        return { success: false, error: '停止信号发送失败，请稍后重试' };
-      }
-      gatewayProcess = null;
-      gatewayStatus = 'stopped';
-      appendLog('info', '服务已停止');
-    } catch (e) {
-      gatewayStatus = 'running';
-      console.error('[停止错误]', e);
-      return { success: false, error: `停止失败: ${(e as Error).message}` };
-    }
-  }
-  return { success: true };
-}
-
 // ============================================
 // 更新处理
 // ============================================
@@ -4902,11 +5002,12 @@ function handleUpdateOpenClaw(config: Record<string, unknown>): Record<string, u
   }
 }
 
-function handleUninstallOpenClaw(config: Record<string, unknown>): Record<string, unknown> {
+async function handleUninstallOpenClaw(config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const installPath = String(config.installPath || '').trim();
+  const managedStateDir = getManagedOpenClawStateDir(config);
   const removedPaths: string[] = [];
 
-  if (!installPath && !fs.existsSync(path.join(os.homedir(), '.openclaw'))) {
+  if (!installPath && !fs.existsSync(managedStateDir)) {
     clearOpenClawDeploymentConfig(config);
     saveConfig(config);
     return {
@@ -4919,13 +5020,16 @@ function handleUninstallOpenClaw(config: Record<string, unknown>): Record<string
   }
 
   try {
-    handleStop();
+    const stopResult = await stopGatewayProcess(config, 15000);
+    if (!stopResult.success) {
+      return stopResult;
+    }
 
     if (installPath) {
       removePathIfExists(installPath, removedPaths);
     }
 
-    removePathIfExists(path.join(os.homedir(), '.openclaw'), removedPaths);
+    removePathIfExists(managedStateDir, removedPaths);
     removePathIfExists(path.join(os.tmpdir(), 'openclaw'), removedPaths);
 
     clearOpenClawDeploymentConfig(config);
@@ -4967,7 +5071,7 @@ async function handleSkillInstall(data: Record<string, unknown>, config: Record<
 
   try {
     const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
-    const gatewayToken = readGatewayTokenFromHome();
+    const gatewayToken = readGatewayToken(config);
     if (!gatewayToken) {
       return { success: false, error: '技能安装需要先启动 OpenClaw 服务，生成网关访问令牌后才能继续' };
     }
@@ -4987,7 +5091,9 @@ async function handleSkillInstall(data: Record<string, unknown>, config: Record<
       return { success: false, error: `OpenClaw 当前技能目录里没有找到 "${skillId}"，请先在 ClawHub 确认 skill id 是否正确` };
     }
 
-    const installOption = Array.isArray(skill.install) ? skill.install[0] : undefined;
+    const installOption = choosePreferredSkillInstallOption(
+      Array.isArray(skill.install) ? skill.install as Array<Record<string, unknown>> : []
+    );
     const installId = String(installOption?.id || '').trim();
     if (!installId) {
       return { success: false, error: `技能 "${skillId}" 当前没有可用的自动安装方式` };
@@ -5129,9 +5235,15 @@ function createServer(config: Record<string, unknown>) {
     }
 
     if (url.pathname === '/') {
-      const status = getGatewayRuntimeStatus(config);
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(getHTML(config, status));
+      void (async () => {
+        const status = await getGatewayRuntimeStatusAsync(config);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(getHTML(config, status));
+      })().catch((error: Error) => {
+        console.error('[首页渲染错误]', error);
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Internal Server Error');
+      });
       return;
     }
 

@@ -43,11 +43,11 @@ echo ""
 
 # macOS ARM64
 echo -e "  ${CYAN}[1/6]${NC} macOS ARM64 (M1/M2/M3)..."
-npx @yao-pkg/pkg dist/index.js --targets node20-macos-arm64 --output bin/lobster-macos-arm64 2>/dev/null
+npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64 2>/dev/null
 
 # macOS Intel
 echo -e "  ${CYAN}[2/6]${NC} macOS Intel..."
-npx @yao-pkg/pkg dist/index.js --targets node20-macos-x64 --output bin/lobster-macos-x64 2>/dev/null
+npx @yao-pkg/pkg dist/index.js --targets node22-macos-x64 --output bin/lobster-macos-x64 2>/dev/null
 
 # 生成 macOS .app zip
 VERSION=$(node -p "require('./package.json').version")
@@ -57,11 +57,11 @@ echo -e "  ${CYAN}[3/6]${NC} 生成 macOS App Bundle..."
 
 # Windows
 echo -e "  ${CYAN}[4/6]${NC} Windows x64..."
-npx @yao-pkg/pkg dist/index.js --targets node20-win-x64 --output bin/lobster-win-x64.exe 2>/dev/null
+npx @yao-pkg/pkg dist/index.js --targets node22-win-x64 --output bin/lobster-win-x64.exe 2>/dev/null
 
 # Linux
 echo -e "  ${CYAN}[5/6]${NC} Linux x64..."
-npx @yao-pkg/pkg dist/index.js --targets node20-linux-x64 --output bin/lobster-linux-x64 2>/dev/null
+npx @yao-pkg/pkg dist/index.js --targets node22-linux-x64 --output bin/lobster-linux-x64 2>/dev/null
 
 echo ""
 echo -e "${GREEN}✅ 打包完成！${NC}"

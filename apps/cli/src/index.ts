@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.28';
+const VERSION = '1.0.29';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -3283,12 +3283,23 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const actionsEl = $('deploy-actions');
       const taskState = task?.state || 'idle';
       if (taskState === 'succeeded') {
-        actionsEl.innerHTML = '<button class="btn btn-primary" onclick="render()">进入控制面板</button>';
+        actionsEl.innerHTML = '<button class="btn btn-primary" onclick="enterDashboardAfterDeploy()">进入控制面板</button>';
       } else if (taskState === 'failed') {
         actionsEl.innerHTML = '<button class="btn btn-primary" onclick="render()">返回重试</button>';
       } else {
         actionsEl.innerHTML = '<button class="btn btn-secondary" disabled>部署进行中...</button>';
       }
+    }
+
+    function enterDashboardAfterDeploy() {
+      const installPath = String(state.config?.installPath || '');
+      if (installPath) {
+        state.status = {
+          ...state.status,
+          installed: true,
+        };
+      }
+      render();
     }
 
     async function pollDeployTask() {

@@ -1,6 +1,6 @@
 {
   "name": "lobster-assistant",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "龙虾助手 - OpenClaw 一键部署工具",
   "type": "commonjs",
   "main": "dist/index.js",

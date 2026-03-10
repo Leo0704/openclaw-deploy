@@ -88,11 +88,6 @@ function startDeployTask() {
 
 function completeDeployTask(result: Record<string, unknown>, baseConfig: Record<string, unknown>) {
   if (result.success && result.config && typeof result.config === 'object') {
-    for (const key of Object.keys(baseConfig)) {
-      if (!(key in (result.config as Record<string, unknown>))) {
-        delete (baseConfig as Record<string, unknown>)[key];
-      }
-    }
     Object.assign(baseConfig, result.config as Record<string, unknown>);
   }
 

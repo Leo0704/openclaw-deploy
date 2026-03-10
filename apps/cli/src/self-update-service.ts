@@ -322,8 +322,7 @@ export async function checkSelfUpdate(deps: SelfUpdateDeps): Promise<UpdateResul
       detached: true,
       stdio: 'inherit',
     });
-    process.exit(0);
-
+    setImmediate(() => process.exit(0));
     return { checked: true, updated: true };
   } catch (error) {
     console.log(`  更新检查失败: ${(error as Error).message}`);

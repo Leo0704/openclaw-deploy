@@ -122,7 +122,7 @@ export function renderWebUiClientSkills(config: Record<string, unknown>, status:
             if (kind) bits.push('[' + kind + ']');
             return bits.join(' ');
           }),
-        ].join('\n');
+        ].join('\\n');
         const selected = window.prompt(promptText, suggested);
         if (!selected) {
           return;

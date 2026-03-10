@@ -140,7 +140,10 @@ export async function performDeployTask(
         if (fs.existsSync(installPath)) {
           try {
             fs.rmSync(installPath, { recursive: true, force: true });
-          } catch {}
+          } catch (error) {
+            deps.addLog(`克隆失败后的目录清理也失败了: ${(error as Error).message}`, 'error');
+            return { success: false, error: '克隆失败后无法清理安装目录，请手动删除该目录后重试' };
+          }
         }
       }
 

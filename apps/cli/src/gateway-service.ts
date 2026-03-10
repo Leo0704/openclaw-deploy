@@ -50,6 +50,9 @@ type GatewayLifecycleDeps = GatewayStateDeps & {
   defaultGatewayPort: number;
 };
 
+const STARTUP_HEALTH_TIMEOUT_MS = 15000;
+const STARTUP_HEALTH_POLL_INTERVAL_MS = 500;
+
 export async function stopGatewayProcess(
   config: Record<string, unknown>,
   deps: GatewayLifecycleDeps,
@@ -254,37 +257,74 @@ export async function handleStart(
     deps.setGatewayProcess(processRef);
     let startupSettled = false;
     let lastStderr = '';
-
-    const startupResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-      const settle = (result: { ok: boolean; error?: string }) => {
-        if (startupSettled) return;
-        startupSettled = true;
-        resolve(result);
-      };
-
-      processRef.once('error', (err: Error) => {
-        settle({ ok: false, error: `进程启动失败: ${err.message}` });
-      });
-
-      processRef.once('exit', (code: number | null) => {
-        const details = lastStderr || (code !== null ? `进程已退出 (code: ${code})` : '进程启动后立即退出');
-        settle({ ok: false, error: details });
-      });
-
-      setTimeout(() => settle({ ok: true }), 1200);
-    });
+    let lastStdout = '';
 
     processRef.stdout?.on('data', (d: Buffer) => {
-      deps.appendLog('info', d.toString().trim());
+      const message = d.toString().trim();
+      if (!message) return;
+      lastStdout = message;
+      deps.appendLog('info', message);
     });
 
     processRef.stderr?.on('data', (d: Buffer) => {
-      lastStderr = d.toString().trim() || lastStderr;
-      deps.appendLog('error', d.toString().trim());
+      const message = d.toString().trim();
+      if (!message) return;
+      lastStderr = message;
+      deps.appendLog('error', message);
     });
 
-    processRef.on('spawn', () => {
-      deps.setGatewayStatus('running');
+    const startupResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      let pollTimer: NodeJS.Timeout | null = null;
+      let timeoutTimer: NodeJS.Timeout | null = null;
+
+      const cleanup = () => {
+        if (pollTimer) clearTimeout(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        processRef.off('error', onStartupError);
+        processRef.off('exit', onStartupExit);
+      };
+
+      const settle = (result: { ok: boolean; error?: string }) => {
+        if (startupSettled) return;
+        startupSettled = true;
+        cleanup();
+        resolve(result);
+      };
+
+      const onStartupError = (err: Error) => {
+        settle({ ok: false, error: `进程启动失败: ${err.message}` });
+      };
+
+      const onStartupExit = (code: number | null) => {
+        const details = lastStderr || lastStdout || (code !== null ? `进程已退出 (code: ${code})` : '进程启动后立即退出');
+        settle({ ok: false, error: details });
+      };
+
+      const pollHealth = async () => {
+        if (startupSettled) return;
+        try {
+          const healthy = await deps.checkExternalGatewayHealth(config);
+          if (healthy) {
+            settle({ ok: true });
+            return;
+          }
+        } catch {}
+        if (!startupSettled) {
+          pollTimer = setTimeout(() => {
+            void pollHealth();
+          }, STARTUP_HEALTH_POLL_INTERVAL_MS);
+        }
+      };
+
+      processRef.once('error', onStartupError);
+      processRef.once('exit', onStartupExit);
+
+      timeoutTimer = setTimeout(() => {
+        const details = lastStderr || lastStdout || `等待 OpenClaw 健康检查超时 (${Math.round(STARTUP_HEALTH_TIMEOUT_MS / 1000)}s)`;
+        settle({ ok: false, error: details });
+      }, STARTUP_HEALTH_TIMEOUT_MS);
+
+      void pollHealth();
     });
 
     processRef.on('error', (err: Error) => {
@@ -313,10 +353,16 @@ export async function handleStart(
       if (deps.getGatewayProcess() === processRef) {
         deps.setGatewayProcess(null);
       }
+      if (!processRef.killed) {
+        try {
+          processRef.kill();
+        } catch {}
+      }
       deps.setGatewayStatus('stopped');
       return { success: false, error: startupResult.error || 'OpenClaw 启动失败' };
     }
 
+    deps.setGatewayStatus('running');
     return { success: true, status: await deps.getGatewayRuntimeStatusAsync(config) };
   } catch (error) {
     deps.setGatewayStatus('stopped');

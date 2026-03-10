@@ -165,7 +165,21 @@ async function verifyLicenseStatus(config: Record<string, unknown>): Promise<Rec
     logError(result.error, 'license-verify');
   }
 
-  if (!valid && result.success) {
+  if (!result.success) {
+    return {
+      success: true,
+      license: {
+        activated: !!config.activated,
+        activationCode: config.activationCode || null,
+        deviceName: config.deviceName || null,
+        activatedAt: config.activatedAt || null,
+        valid: !!config.activated,
+        message: '无法连接授权服务，暂时保留本地激活状态',
+      },
+    };
+  }
+
+  if (!valid) {
     config.activated = false;
     saveConfig(config);
   }

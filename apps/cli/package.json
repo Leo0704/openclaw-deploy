@@ -1,6 +1,6 @@
 {
   "name": "lobster-assistant",
-  "version": "1.0.35",
+  "version": "1.0.36",
   "description": "龙虾助手 - OpenClaw 一键部署工具",
   "type": "commonjs",
   "main": "dist/index.js",
@@ -14,6 +14,9 @@
   },
   "pkg": {
     "scripts": "dist/**/*.js",
+    "assets": [
+      "assets/**/*"
+    ],
     "outputPath": "bin"
   },
   "dependencies": {

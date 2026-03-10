@@ -18,6 +18,7 @@ const {
   isOpenClawProjectDir,
 } = require('./openclaw-project') as typeof import('./openclaw-project');
 const { runCommandStreaming } = require('./process-utils') as typeof import('./process-utils');
+const { getCommandLookupEnv } = require('./system-check') as typeof import('./system-check');
 const { saveConfig } = require('./lobster-config') as typeof import('./lobster-config');
 const {
   normalizeApiFormat,
@@ -48,10 +49,11 @@ export async function performDeployTask(
   const streamCommand = async (
     command: string,
     cwd: string,
-    options: { timeout?: number; ignoreError?: boolean } = {}
+    options: { timeout?: number; ignoreError?: boolean; env?: NodeJS.ProcessEnv } = {}
   ) => {
     const result = await runCommandStreaming(command, cwd, {
       timeout: options.timeout,
+      env: options.env,
       onLog: (level, message) => deps.addLog(message, level === 'error' ? 'error' : 'info'),
     });
     if (!result.success && !options.ignoreError) {
@@ -59,6 +61,16 @@ export async function performDeployTask(
     }
     return result;
   };
+
+  // 将 git+ssh://git@github.com/ 重写为 https://github.com/ 避免 SSH key 问题
+  const getInstallEnv = (): NodeJS.ProcessEnv => ({
+    ...getCommandLookupEnv(),
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'url.https://github.com/.insteadOf',
+    GIT_CONFIG_VALUE_0: 'git+ssh://git@github.com/',
+    GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null',
+  });
 
   try {
     deps.addLog('开始部署...');
@@ -232,6 +244,7 @@ export async function performDeployTask(
       const installResult = await streamCommand(installPlan.command, installPath, {
         timeout: 600000,
         ignoreError: true,
+        env: getInstallEnv(),
       });
       if (!installResult.success) {
         deps.addLog(`依赖安装失败: ${installResult.stderr}`, 'error');
@@ -250,6 +263,7 @@ export async function performDeployTask(
     const buildResult = await streamCommand(buildPlan.command, installPath, {
       timeout: 300000,
       ignoreError: true,
+      env: getInstallEnv(),
     });
     if (buildResult.success) {
       deps.addLog('构建成功 ✓', 'success');

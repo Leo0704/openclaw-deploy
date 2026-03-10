@@ -216,7 +216,7 @@ type NotificationChannelStatus = import('./openclaw-runtime').NotificationChanne
 type GatewayTokenResolution = import('./openclaw-runtime').GatewayTokenResolution;
 type LogEntry = import('./app-state').LogEntry;
 
-const VERSION = '1.0.40';
+const VERSION = '1.0.41';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;

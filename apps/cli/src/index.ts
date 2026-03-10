@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.25';
+const VERSION = '1.0.26';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -1435,6 +1435,13 @@ function runCommand(
   let lastError: typeof AppError.prototype | undefined;
   let attempt = 0;
 
+  const normalizeExecOutput = (value: unknown): string => {
+    if (typeof value === 'string') return value.trim();
+    if (Buffer.isBuffer(value)) return value.toString('utf-8').trim();
+    if (value == null) return '';
+    return String(value).trim();
+  };
+
   while (attempt <= retries) {
     attempt++;
     try {
@@ -1447,8 +1454,10 @@ function runCommand(
       });
       return { success: true, stdout: result.trim() };
     } catch (e: unknown) {
-      const error = e as { stderr?: string; message?: string; status?: number };
-      const errorMessage = error.stderr || error.message || '未知错误';
+      const error = e as { stderr?: unknown; stdout?: unknown; message?: string; status?: number };
+      const stderr = normalizeExecOutput(error.stderr);
+      const stdout = normalizeExecOutput(error.stdout);
+      const errorMessage = stderr || stdout || error.message || '未知错误';
 
       lastError = createError(ErrorType.PROCESS, 'PROCESS_ERROR', {
         userMessage: `命令执行失败: ${errorMessage}`,
@@ -1489,6 +1498,12 @@ function runCommandArgs(
   options: RunCommandArgsOptions = {}
 ): RunCommandResult {
   const { timeout = 300000, ignoreError = false, silent = false, args = [], env } = options;
+  const normalizeExecOutput = (value: unknown): string => {
+    if (typeof value === 'string') return value.trim();
+    if (Buffer.isBuffer(value)) return value.toString('utf-8').trim();
+    if (value == null) return '';
+    return String(value).trim();
+  };
 
   try {
     const result = execFileSync(file, args, {
@@ -1500,8 +1515,10 @@ function runCommandArgs(
     });
     return { success: true, stdout: result.trim() };
   } catch (e: unknown) {
-    const error = e as { stderr?: string; message?: string; status?: number };
-    const errorMessage = error.stderr || error.message || '未知错误';
+    const error = e as { stderr?: unknown; stdout?: unknown; message?: string; status?: number };
+    const stderr = normalizeExecOutput(error.stderr);
+    const stdout = normalizeExecOutput(error.stdout);
+    const errorMessage = stderr || stdout || error.message || '未知错误';
     const appError = createError(ErrorType.PROCESS, 'PROCESS_ERROR', {
       userMessage: `命令执行失败: ${errorMessage}`,
       context: { file, args, cwd, exitCode: error.status },
@@ -3036,7 +3053,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
       \`;
 
-      const res = await api('deploy', payload);
+      const res = await api('deploy', payload, 900000);
 
       const logsEl = $('deploy-logs');
       if (res.logs) {
@@ -3206,7 +3223,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     async function start() {
       if (!state.config.apiKey) return toast('请先配置 API Key', 'error');
       toast('正在启动...');
-      const res = await api('start');
+      const res = await api('start', {}, 180000);
       if (res.success) {
         if (res.status) state.status = res.status;
         else state.status.running = true;

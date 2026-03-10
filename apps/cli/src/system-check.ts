@@ -571,16 +571,29 @@ export async function performHealthChecks(config: {
 
   // 7. 网络连接检查 (非阻塞)
   try {
-    const { hasNetworkConnection } = require('./network-utils');
-    const hasNetwork = await hasNetworkConnection();
+    const { checkNetworkConnectivity } = require('./network-utils');
+    const results = await checkNetworkConnectivity();
+    const reachableCount = results.filter((item: { connected: boolean }) => item.connected).length;
+    const totalCount = results.length;
+    const hasNetwork = reachableCount > 0;
+    const networkMessage = !totalCount
+      ? '未返回网络探测结果'
+      : reachableCount === totalCount
+        ? `网络连接正常 (${reachableCount}/${totalCount} 个探测源可访问)`
+        : hasNetwork
+          ? `部分网络探测可访问 (${reachableCount}/${totalCount})，部署时仍可能重试镜像源`
+          : '网络连接异常';
     checks.push({
       name: '网络连接',
       passed: hasNetwork,
-      message: hasNetwork ? '网络连接正常' : '网络连接异常',
-      severity: hasNetwork ? 'info' : 'warning',
+      message: networkMessage,
+      severity: !hasNetwork ? 'warning' : reachableCount === totalCount ? 'info' : 'warning',
+      details: { reachableCount, totalCount, results },
     });
     if (!hasNetwork) {
       warnings.push('网络连接异常，部署可能失败');
+    } else if (reachableCount !== totalCount) {
+      warnings.push('只有部分网络探测源可访问，部署时可能需要切换镜像源');
     }
   } catch {
     checks.push({

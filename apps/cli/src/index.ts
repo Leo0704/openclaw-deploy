@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.33';
+const VERSION = '1.0.34';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -5390,6 +5390,10 @@ function copyManagedSelfInstall(currentExecPath: string, target: ManagedSelfInst
 
 async function ensureManagedSelfInstall(): Promise<boolean> {
   if (!IS_PACKAGED_RUNTIME) {
+    return false;
+  }
+
+  if (process.platform === 'darwin') {
     return false;
   }
 

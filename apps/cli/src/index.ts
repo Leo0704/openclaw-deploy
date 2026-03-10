@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.32';
+const VERSION = '1.0.33';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -5283,6 +5283,150 @@ interface UpdateResult {
   error?: string;
 }
 
+type ManagedSelfInstallTarget = {
+  installRoot: string;
+  targetExecPath: string;
+  metadataPath: string;
+};
+
+function parseVersionParts(version: string): number[] {
+  return String(version || '')
+    .replace(/^v/, '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+}
+
+function compareVersions(a: string, b: string): number {
+  const left = parseVersionParts(a);
+  const right = parseVersionParts(b);
+  const length = Math.max(left.length, right.length);
+  for (let i = 0; i < length; i++) {
+    const diff = (left[i] || 0) - (right[i] || 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function getManagedSelfInstallTarget(): ManagedSelfInstallTarget {
+  if (process.platform === 'win32') {
+    const baseDir = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    const installRoot = path.join(baseDir, 'LobsterAssistant');
+    return {
+      installRoot,
+      targetExecPath: path.join(installRoot, 'lobster-win-x64.exe'),
+      metadataPath: path.join(installRoot, 'install-meta.json'),
+    };
+  }
+
+  if (process.platform === 'darwin') {
+    const appBundleMatch = process.execPath.match(/^(.*?\.app)\/Contents\/MacOS\/[^/]+$/);
+    if (appBundleMatch) {
+      const installRoot = path.join(os.homedir(), 'Applications', 'Lobster Assistant.app');
+      return {
+        installRoot,
+        targetExecPath: path.join(installRoot, 'Contents', 'MacOS', 'Lobster Assistant'),
+        metadataPath: path.join(installRoot, 'Contents', 'Resources', 'install-meta.json'),
+      };
+    }
+
+    const installRoot = path.join(os.homedir(), '.local', 'share', 'LobsterAssistant');
+    return {
+      installRoot,
+      targetExecPath: path.join(installRoot, os.arch() === 'arm64' ? 'lobster-macos-arm64' : 'lobster-macos-x64'),
+      metadataPath: path.join(installRoot, 'install-meta.json'),
+    };
+  }
+
+  const installRoot = path.join(os.homedir(), '.local', 'share', 'LobsterAssistant');
+  return {
+    installRoot,
+    targetExecPath: path.join(installRoot, 'lobster-linux-x64'),
+    metadataPath: path.join(installRoot, 'install-meta.json'),
+  };
+}
+
+function readManagedSelfInstallVersion(metadataPath: string): string | null {
+  const parsed = readJsonFile(metadataPath);
+  const version = String(parsed?.version || '').trim();
+  return version || null;
+}
+
+function writeManagedSelfInstallVersion(metadataPath: string, version: string) {
+  const dir = path.dirname(metadataPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(metadataPath, JSON.stringify({ version }, null, 2));
+}
+
+function copyManagedSelfInstall(currentExecPath: string, target: ManagedSelfInstallTarget) {
+  const bundleMatch = currentExecPath.match(/^(.*?\.app)\/Contents\/MacOS\/[^/]+$/);
+  if (bundleMatch) {
+    const sourceBundle = bundleMatch[1];
+    const parentDir = path.dirname(target.installRoot);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    fs.rmSync(target.installRoot, { recursive: true, force: true });
+    fs.cpSync(sourceBundle, target.installRoot, { recursive: true });
+    try {
+      fs.chmodSync(target.targetExecPath, 0o755);
+    } catch {}
+    return;
+  }
+
+  const targetDir = path.dirname(target.targetExecPath);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+  fs.copyFileSync(currentExecPath, target.targetExecPath);
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(target.targetExecPath, 0o755);
+    } catch {}
+  }
+}
+
+async function ensureManagedSelfInstall(): Promise<boolean> {
+  if (!IS_PACKAGED_RUNTIME) {
+    return false;
+  }
+
+  const currentExecPath = path.resolve(process.execPath);
+  const target = getManagedSelfInstallTarget();
+  const targetExecPath = path.resolve(target.targetExecPath);
+
+  if (currentExecPath === targetExecPath) {
+    if (readManagedSelfInstallVersion(target.metadataPath) !== VERSION) {
+      writeManagedSelfInstallVersion(target.metadataPath, VERSION);
+    }
+    return false;
+  }
+
+  const installedVersion = readManagedSelfInstallVersion(target.metadataPath);
+  const targetExists = fs.existsSync(targetExecPath);
+
+  if (targetExists && installedVersion && compareVersions(installedVersion, VERSION) >= 0) {
+    console.log(`  检测到固定安装目录已有 v${installedVersion}，切换到统一安装副本启动...`);
+    spawn(targetExecPath, process.argv.slice(1), {
+      detached: true,
+      stdio: 'inherit',
+    });
+    process.exit(0);
+  }
+
+  console.log('  正在同步到固定安装目录...');
+  copyManagedSelfInstall(currentExecPath, target);
+  writeManagedSelfInstallVersion(target.metadataPath, VERSION);
+  console.log('  已切换到固定安装副本，正在重启...');
+  spawn(targetExecPath, process.argv.slice(1), {
+    detached: true,
+    stdio: 'inherit',
+  });
+  process.exit(0);
+}
+
 async function checkSelfUpdate(): Promise<UpdateResult> {
   if (!IS_PACKAGED_RUNTIME) {
     return { checked: false, updated: false };
@@ -5357,6 +5501,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
 
     // 4. 下载新版本（尝试多个镜像源）
     const currentExe = process.execPath;
+    const managedTarget = getManagedSelfInstallTarget();
     const newExe = currentExe + '.new';
     let downloadSuccess = false;
 
@@ -5436,6 +5581,7 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
     }
 
     console.log('  更新完成！正在重启...');
+    writeManagedSelfInstallVersion(managedTarget.metadataPath, latestVersion);
 
     // 8. 重启
     spawn(currentExe, process.argv.slice(1), {
@@ -5459,6 +5605,8 @@ async function checkSelfUpdate(): Promise<UpdateResult> {
 
 async function main() {
   const config = loadConfig();
+
+  await ensureManagedSelfInstall();
 
   // 龙虾助手自动更新（启动时检查）
   await checkSelfUpdate();

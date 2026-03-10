@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.31';
+const VERSION = '1.0.32';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -2512,6 +2512,11 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       state.pendingDeployPayload = null;
       const card = $('main-card');
       const c = state.config, s = state.status;
+      const installed = !!(c.installPath && isOpenClawProjectDir(String(c.installPath)));
+      if (installed !== !!s.installed) {
+        state.status = { ...state.status, installed };
+      }
+      const effectiveStatus = state.status;
 
       // 未激活
       if (!c.activated) {
@@ -2545,7 +2550,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       }
 
       // 未部署
-      if (!s.installed) {
+      if (!installed) {
         const deployProvider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
         const deployIsCustom = state.selectedProvider === 'custom';
         card.innerHTML = \`
@@ -2651,15 +2656,15 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
           <div class="service-hero">
             <div class="hero-panel service-actions">
               <div class="hero-kicker">Service</div>
-              <div class="hero-title">\${s.running ? 'OpenClaw 正在运行' : 'OpenClaw 当前未启动'}</div>
-              <div class="hero-copy">\${s.running ? '网关已经就绪，可以直接打开 OpenClaw，或者复制自动认证链接给当前浏览器会话使用。' : '先确认 API 配置无误，再启动本地网关。启动失败时，可直接在下方查看运行日志。'}</div>
+              <div class="hero-title">\${effectiveStatus.running ? 'OpenClaw 正在运行' : 'OpenClaw 当前未启动'}</div>
+              <div class="hero-copy">\${effectiveStatus.running ? '网关已经就绪，可以直接打开 OpenClaw，或者复制自动认证链接给当前浏览器会话使用。' : '先确认 API 配置无误，再启动本地网关。启动失败时，可直接在下方查看运行日志。'}</div>
               <div class="actions">
-                \${s.running
+                \${effectiveStatus.running
                   ? '<button class="btn btn-danger" onclick="stop()">⏹ 停止服务</button>'
                   : '<button class="btn btn-primary" onclick="start()">▶ 启动服务</button>'
                 }
                 <button class="btn btn-secondary" onclick="showConfig()">⚙️ 配置</button>
-                \${s.running ? '<button class="btn btn-secondary" onclick="openGateway()">🌐 打开 OpenClaw</button>' : ''}
+                \${effectiveStatus.running ? '<button class="btn btn-secondary" onclick="openGateway()">🌐 打开 OpenClaw</button>' : ''}
               </div>
             </div>
             <div class="panel service-side">
@@ -2669,14 +2674,14 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
                 Gateway 端口：<span class="mono">\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}</span><br>
                 模型接入：<span class="mono">\${c.provider || '未配置'} / \${c.model || '未配置'}</span>
               </div>
-              \${s.running ? '<div class="actions" style="margin-top:14px"><button class="btn btn-secondary btn-small" onclick="copyGatewayLink()">🔗 复制自动认证链接</button></div>' : ''}
+              \${effectiveStatus.running ? '<div class="actions" style="margin-top:14px"><button class="btn btn-secondary btn-small" onclick="copyGatewayLink()">🔗 复制自动认证链接</button></div>' : ''}
             </div>
           </div>
 
           <div class="status-grid">
             <div class="status-item">
               <div class="status-label">服务状态</div>
-              <div class="status-value \${s.running ? 'success' : 'error'}">\${s.running ? '● 运行中' : '○ 已停止'}</div>
+              <div class="status-value \${effectiveStatus.running ? 'success' : 'error'}">\${effectiveStatus.running ? '● 运行中' : '○ 已停止'}</div>
             </div>
             <div class="status-item">
               <div class="status-label">端口</div>
@@ -2692,9 +2697,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
             </div>
           </div>
 
-          \${s.running && s.gatewayToken ? \`
+          \${effectiveStatus.running && effectiveStatus.gatewayToken ? \`
             <div class="note note-info" style="margin-top:14px">
-              访问令牌：<code style="word-break:break-all">\${s.gatewayToken}</code><br>
+              访问令牌：<code style="word-break:break-all">\${effectiveStatus.gatewayToken}</code><br>
               使用“打开 OpenClaw”或“复制自动认证链接”时会自动带上它。只有你自己手动打开新标签页时，才需要把它填进网页设置里。
             </div>
           \` : ''}
@@ -2789,7 +2794,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         </div>
       \`;
 
-      if (s.running && (state.currentTab === 'status' || !state.currentTab)) pollLogs();
+      if (effectiveStatus.running && (state.currentTab === 'status' || !state.currentTab)) pollLogs();
       if (state.currentTab === 'channels') {
         if (state.channelsLoaded && state.channelsData) {
           renderChannels();
@@ -3481,8 +3486,14 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     }
 
     function enterDashboardAfterDeploy() {
+      if (state.deployTask?.config) {
+        state.config = state.deployTask.config;
+      }
+      if (state.deployTask?.status) {
+        state.status = state.deployTask.status;
+      }
       const installPath = String(state.config?.installPath || '');
-      if (installPath) {
+      if (installPath && isOpenClawProjectDir(installPath)) {
         state.status = {
           ...state.status,
           installed: true,
@@ -3503,15 +3514,14 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         return;
       }
 
-      state.deployTask = res.task;
-      renderDeployTask(res.task);
-
       if (res.task.config) {
         state.config = res.task.config;
       }
       if (res.task.status) {
         state.status = res.task.status;
       }
+      state.deployTask = res.task;
+      renderDeployTask(res.task);
 
       if (res.task.state === 'running') {
         setTimeout(pollDeployTask, 1500);

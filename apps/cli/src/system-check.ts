@@ -279,6 +279,7 @@ export async function checkPortAvailability(port: number): Promise<PortResult> {
           // 忽略错误
         }
 
+        server.close();
         resolve({
           available: false,
           port,
@@ -286,6 +287,7 @@ export async function checkPortAvailability(port: number): Promise<PortResult> {
           message: `端口 ${port} 已被 ${inUseBy} 占用`,
         });
       } else {
+        server.close();
         resolve({
           available: false,
           port,

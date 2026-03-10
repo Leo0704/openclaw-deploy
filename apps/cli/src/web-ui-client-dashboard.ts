@@ -300,7 +300,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
         </div>
 
         <!-- 使用指南 Tab -->
-        <div id="tab-help" class="tab-content \${state.currentTab === 'help' ? 'active' : ''}" id="help-content">
+        <div id="tab-help" class="tab-content \${state.currentTab === 'help' ? 'active' : ''}"
           加载中...
         </div>
       \`;
@@ -348,7 +348,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
       state.selectedProvider = key;
       resetCustomWizard();
       const provider = PROVIDERS[key];
-      if (provider && provider.models.length > 0) {
+      if (provider && provider.models && provider.models.length > 0) {
         if (key === 'custom') {
           state.selectedModel = state.config.customModelId || state.config.model || '';
         } else {

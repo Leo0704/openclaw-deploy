@@ -181,7 +181,7 @@ export async function handleStart(
           },
           providerBaseUrl,
           model
-        );
+        ).openclawConfig;
       } else {
         const proxyProviderId = normalizeEndpointId(config.customEndpointId) || buildEndpointIdFromUrl(providerBaseUrl) || 'custom';
         (openclawConfig.models as Record<string, unknown>).providers = {
@@ -204,10 +204,32 @@ export async function handleStart(
         };
       }
     } else {
+      const providerId = String(config.provider || providerKey);
+      const modelRef = `${providerId}/${model}`;
+      const catalogModels = Array.isArray((provider as any)?.models) ? (provider as any).models : [];
+      const catalogModel = catalogModels.find((m: { id: string }) => m.id === model);
+
       (openclawConfig.models as Record<string, unknown>).providers = {
-        default: {
-          provider: config.provider,
-          modelId: model,
+        [providerId]: {
+          baseUrl: baseUrl || provider.baseUrl || '',
+          apiKey: config.apiKey,
+          api: apiFormat,
+          models: [
+            {
+              id: model,
+              name: catalogModel?.name || model,
+              contextWindow: catalogModel?.contextWindow || CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW,
+              maxTokens: catalogModel?.maxTokens || CUSTOM_PROVIDER_DEFAULT_MAX_TOKENS,
+              input: ['text'],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              reasoning: false,
+            },
+          ],
+        },
+      };
+      (openclawConfig as Record<string, unknown>).agents = {
+        defaults: {
+          model: { primary: modelRef },
         },
       };
     }
@@ -224,19 +246,11 @@ export async function handleStart(
 
     const env: NodeJS.ProcessEnv = {
       ...getCommandLookupEnv(),
-      PORT: String(gatewayPort),
+      OPENCLAW_GATEWAY_PORT: String(gatewayPort),
       OPENCLAW_STATE_DIR: getManagedOpenClawStateDir(config),
       OPENCLAW_CONFIG_PATH: managedConfigPath,
       [provider.envKey]: String(config.apiKey || ''),
-      OPENAI_BASE_URL: baseUrl,
-      API_KEY: String(config.apiKey || ''),
-      API_PROVIDER: String(config.provider || ''),
-      MODEL: model,
     };
-
-    if (provider.envKey !== 'OPENAI_API_KEY') {
-      env.OPENAI_API_KEY = String(config.apiKey || '');
-    }
 
     const startCommand = getOpenClawStartCommand(config.installPath as string, gatewayPort);
     deps.appendLog('info', `启动命令: ${startCommand}`);

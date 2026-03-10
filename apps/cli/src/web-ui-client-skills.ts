@@ -82,16 +82,19 @@ export function renderWebUiClientSkills(config: Record<string, unknown>, status:
 
       el.innerHTML = installedSkills.map(skill => {
         const removable = skill.removable !== false;
+        const safeName = escapeHtml(skill.name || skill.id);
+        const safeId = escapeHtml(skill.id);
+        const safeSource = escapeHtml(skill.source || '未知');
         return \`
           <div class="installed-item">
             <div>
-              <div class="installed-name">\${skill.name || skill.id}</div>
+              <div class="installed-name">\${safeName}</div>
               <div style="font-size:12px;color:#6B7280;margin-top:4px">
-                skill id: <span class="mono">\${skill.id}</span> · 来源：\${skill.source || '未知'}
+                skill id: <span class="mono">\${safeId}</span> · 来源：\${safeSource}
               </div>
             </div>
             \${removable
-              ? \`<button class="btn btn-secondary btn-small" onclick="uninstallSkill('\${skill.id}')">卸载</button>\`
+              ? \`<button class="btn btn-secondary btn-small" onclick="uninstallSkill(\${JSON.stringify(skill.id)})">卸载</button>\`
               : '<span class="skill-installed">只读</span>'
             }
           </div>

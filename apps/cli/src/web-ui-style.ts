@@ -219,6 +219,7 @@ const WEB_UI_STYLE = `
     #toast.show { opacity: 1; }
     #toast.success { background: #10B981; }
     #toast.error { background: #EF4444; }
+    #toast.info { background: #3B82F6; }
     .wizard-steps { display: grid; gap: 16px; margin-bottom: 20px; }
     .wizard-step {
       padding: 18px;

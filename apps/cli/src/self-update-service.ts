@@ -214,7 +214,7 @@ export async function checkSelfUpdate(deps: SelfUpdateDeps): Promise<UpdateResul
     }
 
     const latestVersion = releaseInfo.tag_name.replace(/^v/, '');
-    if (latestVersion === deps.version) {
+    if (compareVersions(latestVersion, deps.version) <= 0) {
       console.log('  已是最新版本');
       return { checked: true, updated: false };
     }

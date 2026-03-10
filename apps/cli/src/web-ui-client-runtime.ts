@@ -69,14 +69,22 @@ export function renderWebUiClientRuntime(config: Record<string, unknown>, status
       else toast(res.error || '更新失败', 'error');
     }
 
+    let _pollLogsActive = false;
     async function pollLogs() {
-      if (!state.status.running) return;
-      const res = await api('logs');
-      if (res.logs) {
-        const el = $('logs');
-        if (el) { el.innerHTML = res.logs.map(l => \`<div class="log-line log-\${l.level || 'info'}"><span class="log-time">[\${l.time}]</span> \${l.message}</div>\`).join(''); }
+      if (_pollLogsActive) return;
+      _pollLogsActive = true;
+      try {
+        while (state.status.running && state.currentTab === 'status') {
+          const res = await api('logs');
+          if (res.logs) {
+            const el = $('logs');
+            if (el) { el.innerHTML = res.logs.map(l => \`<div class="log-line log-\${escapeHtml(l.level || 'info')}"><span class="log-time">[\${escapeHtml(l.time)}]</span> \${escapeHtml(l.message)}</div>\`).join(''); }
+          }
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      } finally {
+        _pollLogsActive = false;
       }
-      setTimeout(pollLogs, 2000);
     }
 `;
 }

@@ -3,9 +3,16 @@ import { LicenseData, LicenseCode } from './types';
 
 // 从环境变量读取配置
 const OSS_REGION = process.env.OSS_REGION || 'oss-cn-hangzhou';
-const OSS_BUCKET = process.env.OSS_BUCKET || '';
-const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || '';
-const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || '';
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+
+const OSS_BUCKET = requireEnv('OSS_BUCKET');
+const OSS_ACCESS_KEY_ID = requireEnv('OSS_ACCESS_KEY_ID');
+const OSS_ACCESS_KEY_SECRET = requireEnv('OSS_ACCESS_KEY_SECRET');
 const OSS_FILE_KEY = 'license/codes.json';
 
 let ossClient: any = null;
@@ -88,12 +95,15 @@ async function writeLicenseDataWithConditions(data: LicenseData, ifMatch?: strin
 
   data.updatedAt = new Date().toISOString();
 
-  await client.put(OSS_FILE_KEY, Buffer.from(JSON.stringify(data, null, 2)), {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(ifMatch ? { 'If-Match': ifMatch } : {}),
-    },
-  });
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (ifMatch) {
+    headers['If-Match'] = ifMatch;
+  } else {
+    // File did not exist at read time; prevent overwriting if created concurrently
+    headers['If-None-Match'] = '*';
+  }
+
+  await client.put(OSS_FILE_KEY, Buffer.from(JSON.stringify(data, null, 2)), { headers });
 }
 
 /**
@@ -159,6 +169,10 @@ export async function activateCode(
   }
   if (latestCode.status === 'used' && latestCode.deviceFingerprint === deviceFingerprint) {
     return { status: 'already_used_same_device', licenseCode: latestCode };
+  }
+  if (latestCode.status === 'unused') {
+    // Write conflicts exhausted before we could activate; let the caller retry
+    throw new Error('激活写入冲突超过最大重试次数，请稍后重试');
   }
   return { status: 'already_used_other_device', licenseCode: latestCode };
 }

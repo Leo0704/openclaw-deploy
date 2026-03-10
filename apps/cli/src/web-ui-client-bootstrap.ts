@@ -25,7 +25,7 @@ export function renderWebUiClientBootstrap(config: Record<string, unknown>, stat
       const res = await api('status');
       if (res.status) {
         state.status = res.status;
-        if (state.currentView === 'dashboard' && (state.currentTab === 'status' || !state.currentTab)) {
+        if (state.currentView === 'dashboard' && !state.deployPolling && (state.currentTab === 'status' || !state.currentTab)) {
           render();
         }
       }

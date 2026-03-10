@@ -289,10 +289,21 @@ export async function downloadFile(
   options: {
     timeout?: number;
     onProgress?: (downloaded: number, total: number | null) => void;
+    _redirectCount?: number;
   } = {}
 ): Promise<{ success: boolean; error?: Error; bytesWritten?: number }> {
   const fs = require('fs');
-  const { timeout = 60000 } = options;
+  const { timeout = 60000, _redirectCount = 0 } = options;
+  const MAX_REDIRECTS = 10;
+
+  if (_redirectCount > MAX_REDIRECTS) {
+    return {
+      success: false,
+      error: createError(ErrorType.NETWORK, 'TOO_MANY_REDIRECTS', {
+        userMessage: `下载失败: 重定向次数超过 ${MAX_REDIRECTS} 次`,
+      }),
+    };
+  }
 
   return new Promise((resolve) => {
     let parsedUrl: InstanceType<typeof URL>;
@@ -320,7 +331,7 @@ export async function downloadFile(
         file.close();
         fs.unlinkSync(destPath);
         const redirectedUrl = new URL(res.headers.location, parsedUrl).toString();
-        downloadFile(redirectedUrl, destPath, options).then(resolve);
+        downloadFile(redirectedUrl, destPath, { ...options, _redirectCount: _redirectCount + 1 }).then(resolve);
         return;
       }
 

@@ -11,14 +11,14 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
   return `
     const PROVIDERS = ${JSON.stringify(PROVIDERS)};
     // 默认选择当前 provider 的默认模型
-    const defaultProvider = '${config.provider || 'anthropic'}';
+    const defaultProvider = ${JSON.stringify(String(config.provider || 'anthropic'))};
     const defaultModel = defaultProvider === 'custom'
-      ? ('${config.customModelId || config.model || ''}')
-      : ('${config.model}' || (PROVIDERS[defaultProvider]?.models.find(m => m.recommended)?.id || PROVIDERS[defaultProvider]?.models[0]?.id || ''));
+      ? (${JSON.stringify(String(config.customModelId || config.model || ''))})
+      : (${JSON.stringify(String(config.model || ''))} || (PROVIDERS[defaultProvider]?.models.find(m => m.recommended)?.id || PROVIDERS[defaultProvider]?.models[0]?.id || ''));
     const state = {
       config: ${JSON.stringify(config)},
       status: ${JSON.stringify(status)},
-      purchaseUrl: '${purchaseUrl}',
+      purchaseUrl: ${JSON.stringify(String(purchaseUrl || ''))},
       logs: [],
       selectedProvider: defaultProvider,
       selectedModel: defaultModel,
@@ -44,6 +44,9 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
     };
 
     function $(id) { return document.getElementById(id); }
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
     function toast(msg, type = 'success') {
       const t = $('toast'); t.textContent = msg; t.className = 'show ' + type;
       setTimeout(() => t.className = '', 3000);

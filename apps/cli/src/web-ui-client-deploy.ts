@@ -250,8 +250,8 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
 
       if (health.errors && health.errors.length > 0) {
         precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 发现阻塞问题，已停止部署。</div>';
-        $('main-card').innerHTML += recoveryCards;
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回修正</button></div>';
+        $('main-card').insertAdjacentHTML('beforeend', recoveryCards);
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回修正</button></div>');
         return;
       }
 
@@ -261,9 +261,9 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
 
       if (hasRecoveryActions) {
         if (recoveryCards) {
-          $('main-card').innerHTML += recoveryCards;
+          $('main-card').insertAdjacentHTML('beforeend', recoveryCards);
         }
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动尝试安装缺失依赖）</button><button class="btn btn-secondary" onclick="render()">稍后再说</button></div>';
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动尝试安装缺失依赖）</button><button class="btn btn-secondary" onclick="render()">稍后再说</button></div>');
         state.pendingDeployPayload = payload;
         return;
       }

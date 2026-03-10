@@ -29,10 +29,12 @@ export function createServer(config: Record<string, unknown>, deps: ServerDeps) 
     if (url.pathname.startsWith('/api/')) {
       const action = url.pathname.replace('/api/', '');
       let body = '';
+      let responseSent = false;
 
       req.on('data', (chunk: Buffer) => {
         body += chunk;
-        if (body.length > 1024 * 1024) {
+        if (body.length > 1024 * 1024 && !responseSent) {
+          responseSent = true;
           res.writeHead(413, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: '请求体过大' }));
           req.destroy();
@@ -40,6 +42,7 @@ export function createServer(config: Record<string, unknown>, deps: ServerDeps) 
       });
 
       req.on('end', async () => {
+        if (responseSent) return;
         try {
           const data = body ? JSON.parse(body) : {};
           const result = await deps.apiHandlers.handleAPIAsync(action, data, config);

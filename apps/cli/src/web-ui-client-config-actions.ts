@@ -149,7 +149,7 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
             </div>
             <div class="form-group">
               <label class="form-label">Endpoint ID</label>
-              <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrl(c.baseUrl || currentProvider.baseUrl || '') || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
+              <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
             </div>
             <div class="form-group">
               <label class="form-label">模型别名（可选）</label>

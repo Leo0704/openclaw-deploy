@@ -63,6 +63,11 @@ export async function performDeployTask(
   try {
     deps.addLog('开始部署...');
 
+    if (/[;&|`$(){}[\]<>!\\]/.test(installPath)) {
+      deps.addLog('错误: 安装路径包含非法字符', 'error');
+      return { success: false, error: '安装路径包含非法字符，请使用普通目录路径' };
+    }
+
     if (!data.apiKey) {
       deps.addLog('错误: 未提供 API Key', 'error');
       return { success: false, error: '请输入 API Key' };
@@ -176,6 +181,12 @@ export async function performDeployTask(
               break;
             }
             deps.addLog(`${mirror.name} 克隆失败，尝试下一个...`, 'warning');
+            try {
+              const gitDir = path.join(installPath, '.git');
+              if (fs.existsSync(gitDir)) {
+                fs.rmSync(gitDir, { recursive: true, force: true });
+              }
+            } catch {}
           }
           if (!cloneSuccess) {
             deps.addLog('所有镜像源均克隆失败，请检查网络', 'error');

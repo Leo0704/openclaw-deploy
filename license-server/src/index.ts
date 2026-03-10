@@ -28,9 +28,18 @@ async function readBody(request: any): Promise<string> {
     return request.body.toString('utf-8');
   }
 
+  const MAX_BODY_SIZE = 65536; // 64 KB
+
   return await new Promise((resolve, reject) => {
     let body = '';
+    let size = 0;
     request.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        reject(new RequestError(413, '请求体过大'));
+        request.destroy();
+        return;
+      }
       body += chunk.toString('utf-8');
     });
     request.on('end', () => resolve(body));
@@ -50,11 +59,15 @@ function parseJsonBody(body: string): unknown {
   }
 }
 
-function requireNonEmptyString(value: unknown, fieldName: string): string {
+function requireNonEmptyString(value: unknown, fieldName: string, maxLength: number = 512): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new RequestError(400, `${fieldName} 不能为空`);
   }
-  return value.trim();
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) {
+    throw new RequestError(400, `${fieldName} 超过最大长度限制 (${maxLength})`);
+  }
+  return trimmed;
 }
 
 function parseActivateRequest(payload: unknown): ActivateRequest {
@@ -69,9 +82,9 @@ function parseActivateRequest(payload: unknown): ActivateRequest {
   }
 
   return {
-    code: requireNonEmptyString(input.code, 'code'),
-    deviceFingerprint: requireNonEmptyString(input.deviceFingerprint, 'deviceFingerprint'),
-    deviceName: requireNonEmptyString(input.deviceName, 'deviceName'),
+    code: requireNonEmptyString(input.code, 'code', 128),
+    deviceFingerprint: requireNonEmptyString(input.deviceFingerprint, 'deviceFingerprint', 256),
+    deviceName: requireNonEmptyString(input.deviceName, 'deviceName', 128),
     productId,
   };
 }
@@ -88,8 +101,8 @@ function parseVerifyRequest(payload: unknown): VerifyRequest {
   }
 
   return {
-    code: requireNonEmptyString(input.code, 'code'),
-    deviceFingerprint: requireNonEmptyString(input.deviceFingerprint, 'deviceFingerprint'),
+    code: requireNonEmptyString(input.code, 'code', 128),
+    deviceFingerprint: requireNonEmptyString(input.deviceFingerprint, 'deviceFingerprint', 256),
     productId,
   };
 }
@@ -136,6 +149,7 @@ export async function handler(request: any, response: any): Promise<void> {
     console.error('Handler error:', error);
     const statusCode = error instanceof RequestError ? error.statusCode : 500;
     response.setStatusCode(statusCode);
-    response.send(JSON.stringify({ error: statusCode === 500 ? 'Internal Server Error' : 'Bad Request', message: error.message }));
+    const message = statusCode >= 500 ? undefined : error.message;
+    response.send(JSON.stringify({ error: statusCode >= 500 ? 'Internal Server Error' : 'Bad Request', ...(message ? { message } : {}) }));
   }
 }

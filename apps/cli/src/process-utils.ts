@@ -79,10 +79,9 @@ export function runCommand(
       if (attempt <= retries) {
         const delay = 1000 * attempt;
         console.log(`[重试] ${delay}ms 后进行第 ${attempt} 次重试...`);
-        const start = Date.now();
-        while (Date.now() - start < delay) {
-          // 同步等待
-        }
+        // Note: runCommand is synchronous; retries > 0 are not supported here.
+        // Use runCommandStreaming for async retries with proper sleep.
+        break;
       }
     }
   }

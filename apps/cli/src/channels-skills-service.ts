@@ -269,6 +269,7 @@ export async function handleSkillInstall(data: Record<string, unknown>, config: 
     );
     const result = runCommandArgs(installCall.file, config.installPath as string, {
       args: installCall.args,
+      env: getManagedOpenClawEnv(config),
       timeout: 180000,
       ignoreError: true,
       silent: true,
@@ -323,6 +324,20 @@ export async function handleSkillUninstall(data: Record<string, unknown>, config
     const resolved = resolveRemovableSkillPath(config, skillId);
     if (!resolved) {
       return { success: false, error: `已识别到技能 "${skillId}"，但未找到可删除的技能目录` };
+    }
+
+    const nodePath = require('path') as typeof import('path');
+    const nodeOs = require('os') as typeof import('os');
+    const resolvedAbs = nodePath.resolve(resolved.path);
+    const installPathAbs = nodePath.resolve(String(config.installPath || ''));
+    const homedirAbs = nodePath.resolve(nodeOs.homedir());
+    if (
+      resolvedAbs === installPathAbs ||
+      resolvedAbs === homedirAbs ||
+      resolvedAbs === '/' ||
+      resolvedAbs === 'C:\\'
+    ) {
+      return { success: false, error: '技能路径指向受保护目录，已取消卸载操作' };
     }
 
     fs.rmSync(resolved.path, { recursive: true, force: true });

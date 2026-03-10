@@ -1,4 +1,3 @@
-const { isOpenClawProjectDir } = require('./openclaw-project') as typeof import('./openclaw-project');
 const { OPENCLAW_MIN_NODE_VERSION } = require('./system-check') as typeof import('./system-check');
 
 export function renderWebUiClientDeploy(config: Record<string, unknown>, status: Record<string, unknown>, deps: {
@@ -74,8 +73,9 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       if (state.deployTask?.status) {
         state.status = state.deployTask.status;
       }
-      const installPath = String(state.config?.installPath || '');
-      if (installPath && isOpenClawProjectDir(installPath)) {
+      // 部署成功后，服务端返回的 status 应该已包含 installed: true
+      // 如果没有，手动设置（兼容旧逻辑）
+      if (!state.status.installed) {
         state.status = {
           ...state.status,
           installed: true,

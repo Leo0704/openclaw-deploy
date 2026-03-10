@@ -1,6 +1,5 @@
 const os = require('os') as typeof import('os');
 const path = require('path') as typeof import('path');
-const { isOpenClawProjectDir } = require('./openclaw-project') as typeof import('./openclaw-project');
 
 export function renderWebUiClientDashboard(config: Record<string, unknown>, status: Record<string, unknown>, deps: {
   version: string;
@@ -22,10 +21,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
       state.pendingDeployPayload = null;
       const card = $('main-card');
       const c = state.config, s = state.status;
-      const installed = !!(c.installPath && isOpenClawProjectDir(String(c.installPath)));
-      if (installed !== !!s.installed) {
-        state.status = { ...state.status, installed };
-      }
+      const installed = !!s.installed;
       const effectiveStatus = state.status;
 
       // 未激活

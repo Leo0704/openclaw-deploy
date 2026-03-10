@@ -63,12 +63,31 @@ export async function performDeployTask(
   };
 
   // 将 git+ssh://git@github.com/ 重写为 https://github.com/ 避免 SSH key 问题
+  const GIT_SSH_REWRITE_KEY = 'url.https://github.com/.insteadOf';
+  const GIT_SSH_REWRITE_VALUE = 'git+ssh://git@github.com/';
+
+  const setupGitSshRewrite = async (cwd: string) => {
+    await streamCommand(
+      `git config --global "${GIT_SSH_REWRITE_KEY}" "${GIT_SSH_REWRITE_VALUE}"`,
+      cwd,
+      { ignoreError: true }
+    );
+  };
+
+  const cleanupGitSshRewrite = async (cwd: string) => {
+    await streamCommand(
+      `git config --global --unset "${GIT_SSH_REWRITE_KEY}"`,
+      cwd,
+      { ignoreError: true }
+    );
+  };
+
   const getInstallEnv = (): NodeJS.ProcessEnv => ({
     ...getCommandLookupEnv(),
     GIT_TERMINAL_PROMPT: '0',
     GIT_CONFIG_COUNT: '1',
-    GIT_CONFIG_KEY_0: 'url.https://github.com/.insteadOf',
-    GIT_CONFIG_VALUE_0: 'git+ssh://git@github.com/',
+    GIT_CONFIG_KEY_0: GIT_SSH_REWRITE_KEY,
+    GIT_CONFIG_VALUE_0: GIT_SSH_REWRITE_VALUE,
     GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null',
   });
 
@@ -241,11 +260,13 @@ export async function performDeployTask(
     try {
       const installPlan = getInstallCommand(installPath);
       deps.addLog(`安装依赖 (${installPlan.pm})...`);
+      await setupGitSshRewrite(installPath);
       const installResult = await streamCommand(installPlan.command, installPath, {
         timeout: 600000,
         ignoreError: true,
         env: getInstallEnv(),
       });
+      await cleanupGitSshRewrite(installPath);
       if (!installResult.success) {
         deps.addLog(`依赖安装失败: ${installResult.stderr}`, 'error');
         return { success: false, error: installResult.stderr || '依赖安装失败' };

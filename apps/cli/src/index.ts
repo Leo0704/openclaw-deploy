@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.27';
+const VERSION = '1.0.28';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -1718,11 +1718,6 @@ function resolveRemoteDefaultRef(projectPath: string): string {
   return 'origin/main';
 }
 
-const TLON_API_COMMIT = '7eede1c1a756977b09f96aa14a92e2b06318ae87';
-const TLON_API_GITHUB_SPEC = `github:tloncorp/api-beta#${TLON_API_COMMIT}`;
-const TLON_API_GIT_SPEC = `git+https://github.com/tloncorp/api-beta.git#${TLON_API_COMMIT}`;
-const TLON_API_TARBALL = `https://codeload.github.com/tloncorp/api-beta/tar.gz/${TLON_API_COMMIT}`;
-
 type TemporaryPatchResult = {
   changed: boolean;
   error?: string;
@@ -1734,47 +1729,45 @@ function applyTemporaryWindowsTlonPatch(projectPath: string): TemporaryPatchResu
     return { changed: false, restore: () => {} };
   }
 
-  const tlonPackagePath = path.join(projectPath, 'extensions', 'tlon', 'package.json');
-  const lockfilePath = path.join(projectPath, 'pnpm-lock.yaml');
+  const workspacePath = path.join(projectPath, 'pnpm-workspace.yaml');
+  const packageJsonPath = path.join(projectPath, 'package.json');
 
   try {
     let changed = false;
     const originals = new Map<string, string>();
 
-    if (fs.existsSync(tlonPackagePath)) {
-      const tlonPackageRaw = fs.readFileSync(tlonPackagePath, 'utf-8');
-      if (tlonPackageRaw.includes(TLON_API_GITHUB_SPEC)) {
-        originals.set(tlonPackagePath, tlonPackageRaw);
-        fs.writeFileSync(tlonPackagePath, tlonPackageRaw.replaceAll(TLON_API_GITHUB_SPEC, TLON_API_GIT_SPEC));
+    if (fs.existsSync(workspacePath)) {
+      const workspaceRaw = fs.readFileSync(workspacePath, 'utf-8');
+      if (!workspaceRaw.includes('!extensions/tlon')) {
+        originals.set(workspacePath, workspaceRaw);
+        const marker = '  - extensions/*';
+        const patchedWorkspace = workspaceRaw.includes(marker)
+          ? workspaceRaw.replace(marker, `${marker}\n  - "!extensions/tlon"`)
+          : `${workspaceRaw.trimEnd()}\n  - "!extensions/tlon"\n`;
+        fs.writeFileSync(workspacePath, patchedWorkspace);
         changed = true;
       }
     }
 
-    if (fs.existsSync(lockfilePath)) {
-      let lockfileRaw = fs.readFileSync(lockfilePath, 'utf-8');
-      const original = lockfileRaw;
+    if (fs.existsSync(packageJsonPath)) {
+      const packageRaw = fs.readFileSync(packageJsonPath, 'utf-8');
+      if (packageRaw.includes('"@tloncorp/api"')) {
+        const parsed = JSON.parse(packageRaw) as Record<string, unknown>;
+        const pnpmConfig = (parsed.pnpm as Record<string, unknown> | undefined) || {};
+        const onlyBuiltDependencies = Array.isArray(pnpmConfig.onlyBuiltDependencies)
+          ? pnpmConfig.onlyBuiltDependencies.filter((entry) => entry !== '@tloncorp/api')
+          : pnpmConfig.onlyBuiltDependencies;
+        const alreadyRemoved = !Array.isArray(pnpmConfig.onlyBuiltDependencies) || !pnpmConfig.onlyBuiltDependencies.includes('@tloncorp/api');
 
-      lockfileRaw = lockfileRaw.replaceAll(
-        `specifier: ${TLON_API_GITHUB_SPEC}`,
-        `specifier: ${TLON_API_GIT_SPEC}`
-      );
-      lockfileRaw = lockfileRaw.replaceAll(
-        `version: ${TLON_API_TARBALL}`,
-        `version: ${TLON_API_GIT_SPEC}`
-      );
-      lockfileRaw = lockfileRaw.replaceAll(
-        `'@tloncorp/api@${TLON_API_TARBALL}':`,
-        `'@tloncorp/api@${TLON_API_GIT_SPEC}':`
-      );
-      lockfileRaw = lockfileRaw.replaceAll(
-        `resolution: {tarball: ${TLON_API_TARBALL}}`,
-        `resolution: {commit: ${TLON_API_COMMIT}, repo: https://github.com/tloncorp/api-beta.git, type: git}`
-      );
-
-      if (lockfileRaw !== original) {
-        originals.set(lockfilePath, original);
-        fs.writeFileSync(lockfilePath, lockfileRaw);
-        changed = true;
+        if (!alreadyRemoved) {
+          originals.set(packageJsonPath, packageRaw);
+          parsed.pnpm = {
+            ...pnpmConfig,
+            onlyBuiltDependencies,
+          };
+          fs.writeFileSync(packageJsonPath, `${JSON.stringify(parsed, null, 2)}\n`);
+          changed = true;
+        }
       }
     }
 
@@ -2272,7 +2265,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       </div>
     </div>
     <div id="main-card" class="card"></div>
-    <div class="footer">© 2024 龙虾助手 · 让 AI 触手可及</div>
+    <div class="footer">© 2026 龙虾助手 · 让 AI 触手可及</div>
   </div>
   <div id="toast"></div>
   <script>
@@ -3266,17 +3259,26 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
     function renderDeployTask(task) {
       state.currentView = 'deploy';
-      $('main-card').innerHTML = \`
-        <h2 class="card-title">📦 部署中...</h2>
-        <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
-        <div class="actions" id="deploy-actions" style="margin-top:20px"></div>
-      \`;
+      if (!$('deploy-logs') || !$('deploy-actions')) {
+        $('main-card').innerHTML = \`
+          <h2 class="card-title">📦 部署中...</h2>
+          <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
+          <div class="actions" id="deploy-actions" style="margin-top:20px"></div>
+        \`;
+      }
 
       const logsEl = $('deploy-logs');
+      const previousScrollTop = logsEl.scrollTop;
+      const wasNearBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 24;
       const deployLogs = Array.isArray(task?.logs) ? task.logs : [];
       logsEl.innerHTML = deployLogs.length
         ? deployLogs.map(l => \`<div class="log-line log-\${l.level || 'info'}"><span class="log-time">[\${l.time}]</span> \${l.message}</div>\`).join('')
         : '<div class="log-line log-info">准备部署...</div>';
+      if (wasNearBottom) {
+        logsEl.scrollTop = logsEl.scrollHeight;
+      } else {
+        logsEl.scrollTop = previousScrollTop;
+      }
 
       const actionsEl = $('deploy-actions');
       const taskState = task?.state || 'idle';
@@ -4147,7 +4149,7 @@ async function performDeployTask(data: Record<string, unknown>, baseConfig: Reco
     if (tlonPatch.error) {
       addLog(`Windows Tlon 依赖补丁应用失败: ${tlonPatch.error}`, 'warning');
     } else if (tlonPatch.changed) {
-      addLog('已应用临时 Windows Tlon 依赖兼容补丁，安装结束后会自动恢复仓库文件', 'warning');
+      addLog('已临时禁用 Windows 下的 tlon 扩展安装，安装结束后会自动恢复仓库文件', 'warning');
     }
 
     if (projectPackageManager === 'pnpm' && !pnpmAvailable) {

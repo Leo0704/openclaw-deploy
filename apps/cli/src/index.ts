@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.23';
+const VERSION = '1.0.24';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -2134,6 +2134,7 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
 
     function render() {
       state.currentView = 'dashboard';
+      state.pendingDeployPayload = null;
       const card = $('main-card');
       const c = state.config, s = state.status;
 
@@ -3028,6 +3029,94 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       else toast(res.error || '激活失败', 'error');
     }
 
+    async function executeDeploy(payload) {
+      $('main-card').innerHTML = \`
+        <h2 class="card-title">📦 部署中...</h2>
+        <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
+      \`;
+
+      const res = await api('deploy', payload);
+
+      const logsEl = $('deploy-logs');
+      if (res.logs) {
+        logsEl.innerHTML = res.logs.map(l => \`<div class="log-line log-\${l.level || 'info'}"><span class="log-time">[\${l.time}]</span> \${l.message}</div>\`).join('');
+      }
+
+      if (res.success) {
+        state.config = res.config;
+        state.status = res.status;
+        logsEl.innerHTML += '<div class="log-line log-success" style="margin-top:16px">🎉 部署完成！</div>';
+        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">进入控制面板</button></div>';
+      } else {
+        logsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 部署失败: ' + (res.error || '未知错误') + '</div>';
+        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">重试</button></div>';
+      }
+    }
+
+    function hasActionablePrecheckRecovery(health) {
+      const checks = Array.isArray(health?.checks) ? health.checks : [];
+      return checks.some(check => {
+        if (check.passed) return false;
+        return check.name === 'Node.js 版本' || check.name === 'Git' || check.name === '包管理器';
+      });
+    }
+
+    function buildPrecheckRecoveryCards(health) {
+      const cards = [];
+      const checks = Array.isArray(health?.checks) ? health.checks : [];
+      const hasBlockingErrors = Array.isArray(health?.errors) && health.errors.length > 0;
+      const nodeCheck = checks.find(check => check.name === 'Node.js 版本' && !check.passed);
+      const packageCheck = checks.find(check => check.name === '包管理器' && !check.passed);
+      const gitCheck = checks.find(check => check.name === 'Git' && !check.passed);
+
+      if (nodeCheck) {
+        cards.push([
+          '<div class="panel" style="margin-top:16px">',
+          '  <div class="panel-title">Node.js 需要手动安装</div>',
+          '  <div class="panel-copy">当前部署 OpenClaw 要求 <span class="mono">Node.js >= ${OPENCLAW_MIN_NODE_VERSION}</span>。这个依赖不会自动安装，请先手动下载安装，再回来重新点击部署。</div>',
+          '  <div class="actions" style="margin-top:14px">',
+          '    <a class="btn btn-primary" href="https://nodejs.org/en/download" target="_blank" rel="noopener">下载 Node.js</a>',
+          '  </div>',
+          '</div>',
+        ].join(''));
+      }
+
+      if (gitCheck) {
+        cards.push([
+          '<div class="panel" style="margin-top:16px">',
+          '  <div class="panel-title">Git 获取方式</div>',
+          '  <div class="panel-copy">Git 缺失时，龙虾助手在进入正式部署后会优先尝试自动安装；如果自动安装失败，再用下面的下载入口手动安装。</div>',
+          '  <div class="actions" style="margin-top:14px">',
+          '    <a class="btn btn-secondary" href="https://git-scm.com/downloads" target="_blank" rel="noopener">下载 Git</a>',
+          '  </div>',
+          '</div>',
+        ].join(''));
+      }
+
+      if (packageCheck) {
+        cards.push([
+          '<div class="panel" style="margin-top:16px">',
+          '  <div class="panel-title">pnpm 获取方式</div>',
+          '  <div class="panel-copy">pnpm 缺失时，龙虾助手会优先尝试自动安装；如果自动安装失败，或你想手动安装，可以直接打开官方安装说明。</div>',
+          '  <div class="actions" style="margin-top:14px">',
+          '    <a class="btn btn-secondary" href="https://pnpm.io/installation" target="_blank" rel="noopener">打开 pnpm 安装说明</a>',
+          '  </div>',
+          '</div>',
+        ].join(''));
+      }
+
+      if (!cards.length && hasBlockingErrors) {
+        cards.push([
+          '<div class="panel" style="margin-top:16px">',
+          '  <div class="panel-title">手动修复建议</div>',
+          '  <div class="panel-copy">当前存在阻塞项。请先按上面的错误提示修复，再重新点击部署。</div>',
+          '</div>',
+        ].join(''));
+      }
+
+      return cards.join('');
+    }
+
     async function deploy() {
       state.currentView = 'deploy';
       const installPath = $('path').value;
@@ -3077,8 +3166,12 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       }).join('');
       precheckLogsEl.innerHTML = checkLines || '<div class="log-line log-info">未返回检查结果</div>';
 
+      const recoveryCards = buildPrecheckRecoveryCards(health);
+      const hasRecoveryActions = hasActionablePrecheckRecovery(health);
+
       if (health.errors && health.errors.length > 0) {
         precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 发现阻塞问题，已停止部署。</div>';
+        $('main-card').innerHTML += recoveryCards;
         $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回修正</button></div>';
         return;
       }
@@ -3087,27 +3180,26 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
         precheckLogsEl.innerHTML += '<div class="log-line log-warning" style="margin-top:16px">⚠️ 存在警告项，部署会继续。</div>';
       }
 
-      $('main-card').innerHTML = \`
-        <h2 class="card-title">📦 部署中...</h2>
-        <div class="logs" id="deploy-logs" style="max-height:400px"><div class="log-line log-info">准备部署...</div></div>
-      \`;
-
-      const res = await api('deploy', payload);
-
-      const logsEl = $('deploy-logs');
-      if (res.logs) {
-        logsEl.innerHTML = res.logs.map(l => \`<div class="log-line log-\${l.level || 'info'}"><span class="log-time">[\${l.time}]</span> \${l.message}</div>\`).join('');
+      if (hasRecoveryActions) {
+        if (recoveryCards) {
+          $('main-card').innerHTML += recoveryCards;
+        }
+        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动尝试安装缺失依赖）</button><button class="btn btn-secondary" onclick="render()">稍后再说</button></div>';
+        state.pendingDeployPayload = payload;
+        return;
       }
 
-      if (res.success) {
-        state.config = res.config;
-        state.status = res.status;
-        logsEl.innerHTML += '<div class="log-line log-success" style="margin-top:16px">🎉 部署完成！</div>';
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">进入控制面板</button></div>';
-      } else {
-        logsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 部署失败: ' + (res.error || '未知错误') + '</div>';
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">重试</button></div>';
+      await executeDeploy(payload);
+    }
+
+    async function continueDeploy() {
+      if (!state.pendingDeployPayload) {
+        toast('没有待继续的部署任务', 'error');
+        return;
       }
+      const payload = state.pendingDeployPayload;
+      state.pendingDeployPayload = null;
+      await executeDeploy(payload);
     }
 
     async function start() {

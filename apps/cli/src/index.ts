@@ -45,7 +45,7 @@ const {
   getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
-const VERSION = '1.0.34';
+const VERSION = '1.0.35';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const CUSTOM_PROVIDER_DEFAULT_CONTEXT_WINDOW = 16000;
@@ -590,6 +590,13 @@ type GatewayChannelsStatusReport = {
   channels?: Record<string, Record<string, unknown>>;
   channelAccounts?: Record<string, Array<Record<string, unknown>>>;
   channelDefaultAccountId?: Record<string, string>;
+};
+
+type SkillInstallOptionSummary = {
+  id: string;
+  kind: string;
+  label: string;
+  bins: string[];
 };
 
 type NotificationChannelStatus = {
@@ -1143,6 +1150,48 @@ function getOpenClawGatewaySkillReport(config: Record<string, unknown>): OpenCla
   return parsed as OpenClawSkillStatusReport;
 }
 
+function getOpenClawSkillStatusEntry(
+  config: Record<string, unknown>,
+  skillId: string
+): Record<string, unknown> | null {
+  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+    return null;
+  }
+
+  const normalizedSkillId = String(skillId || '').trim();
+  if (!normalizedSkillId) {
+    return null;
+  }
+
+  const gatewayReport = getOpenClawGatewaySkillReport(config);
+  const gatewayEntry = Array.isArray(gatewayReport?.skills)
+    ? gatewayReport!.skills.find((entry) => String(entry?.name || '').trim() === normalizedSkillId)
+    : null;
+  if (gatewayEntry) {
+    return gatewayEntry as Record<string, unknown>;
+  }
+
+  const projectPath = config.installPath as string;
+  const infoCommand = getOpenClawCliCommand(projectPath, ['skills', 'info', normalizedSkillId, '--json']);
+  const infoResult = runCommandArgs(infoCommand.file, projectPath, {
+    args: infoCommand.args,
+    env: getManagedOpenClawEnv(config),
+    timeout: 30000,
+    ignoreError: true,
+    silent: true,
+  });
+  if (!infoResult.success) {
+    return null;
+  }
+
+  const parsed = tryParseJsonObject(infoResult.stdout);
+  if (!parsed || String(parsed.name || '').trim() !== normalizedSkillId) {
+    return null;
+  }
+
+  return parsed;
+}
+
 async function getGatewayHealthStatus(config: Record<string, unknown>): Promise<boolean> {
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
   const result = await fetchWithTimeout(`http://127.0.0.1:${gatewayPort}/health`, { method: 'GET' }, 2000);
@@ -1236,17 +1285,66 @@ function getOpenClawStartCommand(projectPath: string, port: number): string {
     : `npm run openclaw -- gateway run --port ${port} --allow-unconfigured`;
 }
 
-function readGatewayToken(config?: Record<string, unknown>): string | null {
+type GatewayTokenResolution = {
+  token: string | null;
+  configured: boolean;
+  secretRefConfigured: boolean;
+  unavailableReason?: string;
+};
+
+function isSecretRefLike(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.source === 'string' && typeof record.id === 'string';
+}
+
+function resolveGatewayToken(config?: Record<string, unknown>): GatewayTokenResolution {
   const envSource = config ? getManagedOpenClawEnv(config) : process.env;
   const envToken = String(envSource.OPENCLAW_GATEWAY_TOKEN || envSource.CLAWDBOT_GATEWAY_TOKEN || '').trim();
   if (envToken) {
-    return envToken;
+    return {
+      token: envToken,
+      configured: true,
+      secretRefConfigured: false,
+    };
   }
 
   const configJson = readOpenClawRuntimeConfig(config);
   const gateway = configJson?.gateway as Record<string, unknown> | undefined;
   const auth = gateway?.auth as Record<string, unknown> | undefined;
-  return typeof auth?.token === 'string' ? auth.token.trim() || null : null;
+  const configuredToken = auth?.token;
+
+  if (typeof configuredToken === 'string') {
+    const token = configuredToken.trim();
+    return {
+      token: token || null,
+      configured: !!token,
+      secretRefConfigured: false,
+    };
+  }
+
+  if (isSecretRefLike(configuredToken)) {
+    return {
+      token: null,
+      configured: true,
+      secretRefConfigured: true,
+      unavailableReason:
+        'gateway.auth.token 由 SecretRef 管理，龙虾助手不会直接读取它。若需自动认证或网关调用，请在启动环境中提供 OPENCLAW_GATEWAY_TOKEN。',
+    };
+  }
+
+  return {
+    token: null,
+    configured: false,
+    secretRefConfigured: false,
+  };
+}
+
+function readGatewayToken(config?: Record<string, unknown>): string | null {
+  return resolveGatewayToken(config).token;
 }
 
 function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; error?: string } {
@@ -1755,6 +1853,35 @@ function choosePreferredSkillInstallOption(
   return ranked[0]?.option;
 }
 
+function normalizeSkillInstallOptions(skill: Record<string, unknown> | null | undefined): SkillInstallOptionSummary[] {
+  if (!skill || !Array.isArray(skill.install)) {
+    return [];
+  }
+
+  return skill.install
+    .map((option) => {
+      const record = option as Record<string, unknown>;
+      const id = String(record.id || '').trim();
+      if (!id) {
+        return null;
+      }
+
+      const kind = String(record.kind || '').trim();
+      const label = String(record.label || kind || id).trim();
+      const bins = Array.isArray(record.bins)
+        ? record.bins.map((bin) => String(bin || '').trim()).filter(Boolean)
+        : [];
+
+      return {
+        id,
+        kind,
+        label,
+        bins,
+      };
+    })
+    .filter((option): option is SkillInstallOptionSummary => option !== null);
+}
+
 function resolveRemoteDefaultRef(projectPath: string): string {
   const originHead = runCommand('git symbolic-ref refs/remotes/origin/HEAD', projectPath, {
     ignoreError: true,
@@ -1966,16 +2093,23 @@ function getGatewayRuntimeStatus(config: Record<string, unknown>): {
   state: 'running' | 'stopped' | 'starting' | 'stopping';
   gatewayPort: number;
   gatewayToken: string | null;
+  gatewayTokenConfigured: boolean;
+  gatewayTokenSecretRefConfigured: boolean;
+  gatewayTokenWarning: string | null;
   gatewayUrl: string;
 } {
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
   const installPath = String(config.installPath || '');
+  const tokenResolution = resolveGatewayToken(config);
   return {
     installed: !!installPath && isOpenClawProjectDir(installPath),
     running: gatewayStatus === 'running' || gatewayStatus === 'starting',
     state: gatewayStatus,
     gatewayPort,
-    gatewayToken: readGatewayToken(config),
+    gatewayToken: tokenResolution.token,
+    gatewayTokenConfigured: tokenResolution.configured,
+    gatewayTokenSecretRefConfigured: tokenResolution.secretRefConfigured,
+    gatewayTokenWarning: tokenResolution.unavailableReason || null,
     gatewayUrl: `http://localhost:${gatewayPort}/`,
   };
 }
@@ -2702,6 +2836,11 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
               访问令牌：<code style="word-break:break-all">\${effectiveStatus.gatewayToken}</code><br>
               使用“打开 OpenClaw”或“复制自动认证链接”时会自动带上它。只有你自己手动打开新标签页时，才需要把它填进网页设置里。
             </div>
+          \` : effectiveStatus.running && effectiveStatus.gatewayTokenSecretRefConfigured ? \`
+            <div class="note note-info" style="margin-top:14px">
+              当前访问令牌由外部 SecretRef 管理。龙虾助手不会把它直接拼进网页链接里。<br>
+              你仍然可以打开 OpenClaw，但如果网页提示输入 token，请先在启动环境中提供 <span class="mono">OPENCLAW_GATEWAY_TOKEN</span>，或使用你自己的 SecretRef 来源。
+            </div>
           \` : ''}
 
           <div class="divider"></div>
@@ -3204,8 +3343,49 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     }
 
     async function installSkill(skillId) {
+      const optionsRes = await api('skills/install-options', { skill: skillId });
+      if (!optionsRes.success) {
+        toast(optionsRes.error || '无法读取技能安装方式', 'error');
+        return;
+      }
+
+      const options = Array.isArray(optionsRes.options) ? optionsRes.options : [];
+      let installId = String(optionsRes.preferredInstallId || '').trim();
+
+      if (options.length > 1) {
+        const suggested = String(optionsRes.recommendedInstallId || installId || options[0]?.id || '').trim();
+        const promptText = [
+          '技能 "' + skillId + '" 有多种安装方式，请输入要使用的 install id：',
+          '',
+          ...options.map((option) => {
+            const bits = [String(option.id || '').trim()];
+            const label = String(option.label || '').trim();
+            const kind = String(option.kind || '').trim();
+            if (label && label !== bits[0]) bits.push('(' + label + ')');
+            if (kind) bits.push('[' + kind + ']');
+            return bits.join(' ');
+          }),
+        ].join('\n');
+        const selected = window.prompt(promptText, suggested);
+        if (!selected) {
+          return;
+        }
+        installId = selected.trim();
+        if (!options.some((option) => String(option.id || '').trim() === installId)) {
+          toast('安装方式无效，请重新输入列表里的 install id', 'error');
+          return;
+        }
+      } else if (!installId && options.length === 1) {
+        installId = String(options[0]?.id || '').trim();
+      }
+
+      if (!installId) {
+        toast('当前技能没有可用的安装方式', 'error');
+        return;
+      }
+
       toast('正在安装技能...', 'info');
-      const res = await api('skills/install', { skill: skillId });
+      const res = await api('skills/install', { skill: skillId, installId });
       if (res.success) {
         toast(res.message || '安装成功！');
         const input = $('skill-id-input');
@@ -3477,9 +3657,11 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const actionsEl = $('deploy-actions');
       const taskState = task?.state || 'idle';
       if (taskState === 'succeeded') {
-        actionsEl.innerHTML = '<button class="btn btn-primary" onclick="enterDashboardAfterDeploy()">进入控制面板</button>';
+        actionsEl.innerHTML = '<button class="btn btn-primary" id="enter-dashboard-btn">进入控制面板</button>';
+        $('enter-dashboard-btn')?.addEventListener('click', enterDashboardAfterDeploy);
       } else if (taskState === 'failed') {
-        actionsEl.innerHTML = '<button class="btn btn-primary" onclick="render()">返回重试</button>';
+        actionsEl.innerHTML = '<button class="btn btn-primary" id="deploy-retry-btn">返回重试</button>';
+        $('deploy-retry-btn')?.addEventListener('click', render);
       } else {
         actionsEl.innerHTML = '<button class="btn btn-secondary" disabled>部署进行中...</button>';
       }
@@ -3520,15 +3702,16 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       if (res.task.status) {
         state.status = res.task.status;
       }
-      state.deployTask = res.task;
-      renderDeployTask(res.task);
-
       if (res.task.state === 'running') {
+        state.deployTask = res.task;
+        renderDeployTask(res.task);
         setTimeout(pollDeployTask, 1500);
         return;
       }
 
       state.deployPolling = false;
+      state.deployTask = res.task;
+      renderDeployTask(res.task);
       if (res.task.state === 'succeeded') {
         toast('部署完成！');
       } else if (res.task.state === 'failed') {
@@ -4022,6 +4205,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
     }
 
     function openGateway() {
+      if (state.status.gatewayTokenSecretRefConfigured && !state.status.gatewayToken) {
+        toast('当前 token 由 SecretRef 管理，本次会打开未注入 token 的控制台链接。若网页提示输入 token，请在运行环境中提供 OPENCLAW_GATEWAY_TOKEN。', 'info');
+      }
       window.open(getGatewayOpenUrl(), '_blank');
     }
 
@@ -4029,7 +4215,9 @@ function getHTML(config: Record<string, unknown>, status: ReturnType<typeof getG
       const url = getGatewayOpenUrl();
       try {
         await navigator.clipboard.writeText(url);
-        toast('自动认证链接已复制');
+        toast(state.status.gatewayTokenSecretRefConfigured && !state.status.gatewayToken
+          ? '已复制控制台链接。当前 token 由 SecretRef 管理，链接里不会直接附带 token。'
+          : '自动认证链接已复制');
       } catch {
         toast('复制失败，请手动打开 OpenClaw', 'error');
       }
@@ -4127,6 +4315,9 @@ async function handleAPIAsync(action: string, data: Record<string, unknown>, con
 
     case 'skills/installed':
       return { success: true, skills: await getInstalledOpenClawSkillsFromStatus(config) };
+
+    case 'skills/install-options':
+      return handleSkillInstallOptions(data, config);
 
     case 'skills/install':
       return handleSkillInstall(data, config);
@@ -4426,6 +4617,14 @@ function handleDeployStart(data: Record<string, unknown>, baseConfig: Record<str
   };
 
   void performDeployTask(data, baseConfig).then((result) => {
+    if (result.success && result.config && typeof result.config === 'object') {
+      for (const key of Object.keys(baseConfig)) {
+        if (!(key in (result.config as Record<string, unknown>))) {
+          delete (baseConfig as Record<string, unknown>)[key];
+        }
+      }
+      Object.assign(baseConfig, result.config as Record<string, unknown>);
+    }
     deployTask.state = result.success ? 'succeeded' : 'failed';
     deployTask.error = result.success ? undefined : String(result.error || '部署失败');
     deployTask.finishedAt = new Date().toISOString();
@@ -5064,26 +5263,72 @@ async function handleUninstallOpenClaw(config: Record<string, unknown>): Promise
 // 技能安装处理
 // ============================================
 
-async function handleSkillInstall(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
+function validateSkillInstallRequest(data: Record<string, unknown>, config: Record<string, unknown>): { skillId?: string; error?: string } {
   const skillId = String(data.skill || '').trim();
   if (!skillId) {
-    return { success: false, error: '请指定技能名称' };
+    return { error: '请指定技能名称' };
   }
   if (!/^[a-z0-9][a-z0-9-_./]{0,127}$/i.test(skillId)) {
-    return { success: false, error: '技能名称格式不正确' };
+    return { error: '技能名称格式不正确' };
   }
   if (!config.installPath || !fs.existsSync(config.installPath as string)) {
-    return { success: false, error: '请先部署 OpenClaw' };
+    return { error: '请先部署 OpenClaw' };
   }
   if (!isOpenClawProjectDir(config.installPath as string)) {
-    return { success: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
+    return { error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
   }
+  return { skillId };
+}
+
+function getGatewayTokenMissingMessage(config: Record<string, unknown>): string {
+  const tokenResolution = resolveGatewayToken(config);
+  if (tokenResolution.secretRefConfigured) {
+    return '当前 gateway token 由 SecretRef 管理，龙虾助手无法直接读取它来执行网关调用。请在启动龙虾助手的环境里提供 OPENCLAW_GATEWAY_TOKEN 后再试。';
+  }
+  return '技能安装需要先启动 OpenClaw 服务，生成网关访问令牌后才能继续';
+}
+
+function handleSkillInstallOptions(data: Record<string, unknown>, config: Record<string, unknown>): Record<string, unknown> {
+  const validation = validateSkillInstallRequest(data, config);
+  if (validation.error) {
+    return { success: false, error: validation.error };
+  }
+
+  const skill = getOpenClawSkillStatusEntry(config, validation.skillId as string);
+  if (!skill) {
+    return {
+      success: false,
+      error: `OpenClaw 当前技能目录里没有找到 "${validation.skillId}"，请先在 ClawHub 确认 skill id 是否正确`,
+    };
+  }
+
+  const options = normalizeSkillInstallOptions(skill);
+  if (options.length === 0) {
+    return { success: false, error: `技能 "${validation.skillId}" 当前没有可用的自动安装方式` };
+  }
+
+  const recommended = choosePreferredSkillInstallOption(options);
+  return {
+    success: true,
+    skill: validation.skillId,
+    options,
+    preferredInstallId: options.length === 1 ? String(options[0].id || '') : '',
+    recommendedInstallId: String(recommended?.id || ''),
+  };
+}
+
+async function handleSkillInstall(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const validation = validateSkillInstallRequest(data, config);
+  if (validation.error) {
+    return { success: false, error: validation.error };
+  }
+  const skillId = validation.skillId as string;
 
   try {
     const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
     const gatewayToken = readGatewayToken(config);
     if (!gatewayToken) {
-      return { success: false, error: '技能安装需要先启动 OpenClaw 服务，生成网关访问令牌后才能继续' };
+      return { success: false, error: getGatewayTokenMissingMessage(config) };
     }
 
     const gatewayHealthy = await getGatewayHealthStatus(config);
@@ -5091,20 +5336,28 @@ async function handleSkillInstall(data: Record<string, unknown>, config: Record<
       return { success: false, error: '技能安装需要 OpenClaw 服务正在运行，请先启动服务后再安装' };
     }
 
-    const report = getOpenClawGatewaySkillReport(config);
-    if (!report?.skills) {
-      return { success: false, error: '无法读取 OpenClaw 技能状态，请确认 OpenClaw 服务运行正常' };
-    }
-
-    const skill = report.skills.find((entry) => String(entry?.name || '').trim() === skillId);
+    const skill = getOpenClawSkillStatusEntry(config, skillId);
     if (!skill) {
       return { success: false, error: `OpenClaw 当前技能目录里没有找到 "${skillId}"，请先在 ClawHub 确认 skill id 是否正确` };
     }
 
-    const installOption = choosePreferredSkillInstallOption(
-      Array.isArray(skill.install) ? skill.install as Array<Record<string, unknown>> : []
-    );
-    const installId = String(installOption?.id || '').trim();
+    const options = normalizeSkillInstallOptions(skill);
+    const installId = String(data.installId || '').trim();
+    if (!installId) {
+      if (options.length > 1) {
+        return {
+          success: false,
+          error: `技能 "${skillId}" 有多种安装方式，请先明确选择 install id 后再安装`,
+          needsInstallChoice: true,
+          options,
+        };
+      }
+      return { success: false, error: `技能 "${skillId}" 缺少 install id，请重新选择安装方式` };
+    }
+    if (!options.some((option) => String(option.id || '').trim() === installId)) {
+      return { success: false, error: `技能 "${skillId}" 不存在 install id "${installId}"` };
+    }
+
     if (!installId) {
       return { success: false, error: `技能 "${skillId}" 当前没有可用的自动安装方式` };
     }

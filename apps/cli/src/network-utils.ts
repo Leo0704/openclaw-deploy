@@ -53,6 +53,7 @@ const DEFAULT_CONNECTIVITY_URLS = [
   'https://api.github.com',
   'https://hub.gitmirror.com/https://github.com',
   'https://mirror.ghproxy.com/https://github.com',
+  'https://registry.npmmirror.com',
 ];
 
 // ============================================

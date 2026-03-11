@@ -15,6 +15,7 @@ export interface RunCommandOptions {
   retries?: number;
   ignoreError?: boolean;
   silent?: boolean;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface RunCommandResult {
@@ -41,7 +42,7 @@ export function runCommand(
   cwd: string,
   options: RunCommandOptions = {}
 ): RunCommandResult {
-  const { timeout = 300000, retries = 0, ignoreError = false, silent = false } = options;
+  const { timeout = 300000, retries = 0, ignoreError = false, silent = false, env } = options;
 
   let lastError: typeof AppError.prototype | undefined;
   let attempt = 0;
@@ -51,7 +52,7 @@ export function runCommand(
     try {
       const result = execSync(cmd, {
         cwd,
-        env: getCommandLookupEnv(),
+        env: env || getCommandLookupEnv(),
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout,

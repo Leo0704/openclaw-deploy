@@ -10,21 +10,29 @@ const {
 const {
   applyTemporaryWindowsTlonPatch,
   ensureDependencyInstalled,
+  getPackageInstallAttempts,
 } = require('./deployment-service') as typeof import('./deployment-service');
 const {
   detectProjectPackageManager,
   getBuildCommand,
-  getInstallCommand,
   isOpenClawProjectDir,
   normalizeProjectPath,
 } = require('./openclaw-project') as typeof import('./openclaw-project');
-const { runCommandStreaming } = require('./process-utils') as typeof import('./process-utils');
+const {
+  checkCommand,
+  runCommandArgs,
+  runCommandStreaming,
+} = require('./process-utils') as typeof import('./process-utils');
 const { getCommandLookupEnv } = require('./system-check') as typeof import('./system-check');
 const { saveConfig } = require('./lobster-config') as typeof import('./lobster-config');
+const { downloadFile } = require('./network-utils') as typeof import('./network-utils');
 const {
   normalizeApiFormat,
   normalizeEndpointId,
 } = require('./provider-utils') as typeof import('./provider-utils');
+const {
+  getMirrorSourceArchive,
+} = require('./release-sources') as typeof import('./release-sources');
 
 type DeployLogLevel = 'info' | 'success' | 'error' | 'warning';
 
@@ -91,6 +99,134 @@ export async function performDeployTask(
     GIT_CONFIG_VALUE_0: GIT_SSH_REWRITE_VALUE,
     GIT_SSH_COMMAND: 'ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null',
   });
+
+  const getCurrentGitBranch = async (): Promise<string> => {
+    const branchResult = await streamCommand('git branch --show-current', installPath, {
+      ignoreError: true,
+      timeout: 10000,
+    });
+    return String(branchResult.stdout || '').trim() || 'main';
+  };
+
+  const extractSourceArchive = async (archivePath: string, destDir: string, format: 'tar.gz' | 'zip') => {
+    if (format === 'tar.gz') {
+      if (!checkCommand('tar')) {
+        return { success: false, error: '当前系统缺少 tar，无法解压源码归档' };
+      }
+      const extractResult = runCommandArgs('tar', process.cwd(), {
+        args: ['-xzf', archivePath, '-C', destDir],
+        timeout: 300000,
+        ignoreError: true,
+        silent: true,
+      });
+      return extractResult.success
+        ? { success: true }
+        : { success: false, error: extractResult.stderr || 'tar 解压失败' };
+    }
+
+    if (os.platform() === 'win32') {
+      const powershell = checkCommand('powershell') ? 'powershell' : checkCommand('pwsh') ? 'pwsh' : '';
+      if (!powershell) {
+        return { success: false, error: '当前系统缺少 PowerShell，无法解压 ZIP 源码包' };
+      }
+      const extractResult = runCommandArgs(powershell, process.cwd(), {
+        args: [
+          '-NoProfile',
+          '-Command',
+          `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
+        ],
+        timeout: 300000,
+        ignoreError: true,
+        silent: true,
+      });
+      return extractResult.success
+        ? { success: true }
+        : { success: false, error: extractResult.stderr || 'PowerShell 解压失败' };
+    }
+
+    if (!checkCommand('unzip')) {
+      return { success: false, error: '当前系统缺少 unzip，无法解压 ZIP 源码包' };
+    }
+
+    const extractResult = runCommandArgs('unzip', process.cwd(), {
+      args: ['-q', archivePath, '-d', destDir],
+      timeout: 300000,
+      ignoreError: true,
+      silent: true,
+    });
+    return extractResult.success
+      ? { success: true }
+      : { success: false, error: extractResult.stderr || 'unzip 解压失败' };
+  };
+
+  const installFromSourceArchive = async (): Promise<boolean> => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-source-'));
+    const extractDir = path.join(tempRoot, 'extract');
+    fs.mkdirSync(extractDir, { recursive: true });
+
+    const archiveCandidates: Array<{ mirrorName: string; url: string; format: 'tar.gz' | 'zip' }> = [];
+    if (checkCommand('tar')) {
+      for (let i = 0; i < deps.githubMirrors.length; i++) {
+        archiveCandidates.push({
+          mirrorName: deps.githubMirrors[i].name,
+          url: getMirrorSourceArchive(i, 'main', 'tar.gz'),
+          format: 'tar.gz',
+        });
+      }
+    } else {
+      for (let i = 0; i < deps.githubMirrors.length; i++) {
+        archiveCandidates.push({
+          mirrorName: deps.githubMirrors[i].name,
+          url: getMirrorSourceArchive(i, 'main', 'zip'),
+          format: 'zip',
+        });
+      }
+    }
+
+    try {
+      for (const candidate of archiveCandidates) {
+        fs.rmSync(extractDir, { recursive: true, force: true });
+        fs.mkdirSync(extractDir, { recursive: true });
+        const archivePath = path.join(tempRoot, candidate.format === 'tar.gz' ? 'openclaw.tar.gz' : 'openclaw.zip');
+        deps.addLog(`git 克隆失败，尝试源码归档下载 (${candidate.mirrorName})...`, 'warning');
+        const downloadResult = await downloadFile(candidate.url, archivePath, { timeout: 120000 });
+        if (!downloadResult.success) {
+          deps.addLog(`${candidate.mirrorName} 归档下载失败，尝试下一个...`, 'warning');
+          continue;
+        }
+
+        const extractResult = await extractSourceArchive(archivePath, extractDir, candidate.format);
+        if (!extractResult.success) {
+          deps.addLog(`${candidate.mirrorName} 归档解压失败: ${extractResult.error}`, 'warning');
+          try { fs.unlinkSync(archivePath); } catch {}
+          continue;
+        }
+
+        const extractedRoot = fs.readdirSync(extractDir)
+          .map((entry) => path.join(extractDir, entry))
+          .find((entry) => fs.existsSync(entry) && fs.statSync(entry).isDirectory());
+
+        if (!extractedRoot) {
+          deps.addLog(`${candidate.mirrorName} 归档内容无效，尝试下一个...`, 'warning');
+          continue;
+        }
+
+        if (fs.existsSync(installPath)) {
+          fs.rmSync(installPath, { recursive: true, force: true });
+        }
+        fs.mkdirSync(path.dirname(installPath), { recursive: true });
+        fs.cpSync(extractedRoot, installPath, { recursive: true });
+        deps.addLog(`源码归档安装成功 ✓ (使用: ${candidate.mirrorName})`, 'success');
+        deps.addLog('当前安装来自源码归档，后续更新会优先继续尝试 git 拉取；若网络仍不稳定，可重新部署覆盖更新', 'warning');
+        return true;
+      }
+      return false;
+    } finally {
+      try {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      } catch {}
+    }
+  };
 
   try {
     deps.addLog('开始部署...');
@@ -188,8 +324,11 @@ export async function performDeployTask(
       }
 
       if (!cloneSuccess) {
-        deps.addLog('所有镜像源均克隆失败，请检查网络', 'error');
-        return { success: false, error: '网络连接失败，请检查网络后重试' };
+        const archiveInstalled = await installFromSourceArchive();
+        if (!archiveInstalled) {
+          deps.addLog('所有镜像源均克隆失败，源码归档下载也失败，请检查网络', 'error');
+          return { success: false, error: '网络连接失败，请检查网络后重试' };
+        }
       }
     } else {
       const existingStat = fs.statSync(installPath);
@@ -224,8 +363,11 @@ export async function performDeployTask(
             } catch {}
           }
           if (!cloneSuccess) {
-            deps.addLog('所有镜像源均克隆失败，请检查网络', 'error');
-            return { success: false, error: '网络连接失败，请检查网络后重试' };
+            const archiveInstalled = await installFromSourceArchive();
+            if (!archiveInstalled) {
+              deps.addLog('所有镜像源均克隆失败，源码归档下载也失败，请检查网络', 'error');
+              return { success: false, error: '网络连接失败，请检查网络后重试' };
+            }
           }
         } else {
           deps.addLog('错误: 目录已存在，但不是 OpenClaw 项目目录', 'error');
@@ -233,10 +375,26 @@ export async function performDeployTask(
         }
       } else {
         deps.addLog('目录已存在，更新中...');
-        const pullResult = await streamCommand('git pull', installPath, {
+        let pullResult = await streamCommand('git pull', installPath, {
           timeout: 300000,
           ignoreError: true,
         });
+        if (!pullResult.success) {
+          const branch = await getCurrentGitBranch();
+          for (let i = 0; i < deps.githubMirrors.length; i++) {
+            const mirror = deps.githubMirrors[i];
+            const repoUrl = deps.getMirrorRepo(i);
+            deps.addLog(`直连更新失败，尝试镜像拉取 (${mirror.name})...`, 'warning');
+            const mirrorPull = await streamCommand(`git pull --ff-only ${repoUrl} ${branch}`, installPath, {
+              timeout: 300000,
+              ignoreError: true,
+            });
+            if (mirrorPull.success) {
+              pullResult = mirrorPull;
+              break;
+            }
+          }
+        }
         if (pullResult.success) {
           deps.addLog('更新成功 ✓', 'success');
         } else {
@@ -262,14 +420,25 @@ export async function performDeployTask(
     }
 
     try {
-      const installPlan = getInstallCommand(installPath);
-      deps.addLog(`安装依赖 (${installPlan.pm})...`);
+      const installAttempts = getPackageInstallAttempts(installPath, getInstallEnv());
+      const installPlan = detectProjectPackageManager(installPath);
+      deps.addLog(`安装依赖 (${installPlan})...`);
       await setupGitSshRewrite(installPath);
-      const installResult = await streamCommand(installPlan.command, installPath, {
-        timeout: 600000,
-        ignoreError: true,
-        env: getInstallEnv(),
-      });
+      let installResult: Awaited<ReturnType<typeof streamCommand>> = { success: false };
+      for (let index = 0; index < installAttempts.length; index++) {
+        const attempt = installAttempts[index];
+        if (index > 0) {
+          deps.addLog(`默认依赖源失败，尝试 ${attempt.label}...`, 'warning');
+        }
+        installResult = await streamCommand(attempt.command, installPath, {
+          timeout: 600000,
+          ignoreError: true,
+          env: attempt.env,
+        });
+        if (installResult.success) {
+          break;
+        }
+      }
       await cleanupGitSshRewrite(installPath);
       if (!installResult.success) {
         deps.addLog(`依赖安装失败: ${installResult.stderr}`, 'error');

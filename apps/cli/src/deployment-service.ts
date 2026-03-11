@@ -21,18 +21,25 @@ const {
   checkDependencies,
   OPENCLAW_MIN_NODE_VERSION,
   checkPnpmAvailable,
+  getCommandLookupEnv,
 } = require('./system-check') as typeof import('./system-check');
 
 const {
   checkCommand,
   runCommand,
 } = require('./process-utils') as typeof import('./process-utils');
+const {
+  GITHUB_MIRRORS,
+  getMirrorRepo,
+} = require('./release-sources') as typeof import('./release-sources');
 
 type TemporaryPatchResult = {
   changed: boolean;
   error?: string;
   restore: () => void;
 };
+
+export const NPM_MIRROR_REGISTRY = 'https://registry.npmmirror.com';
 
 export function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; error?: string } {
   if (!isOpenClawProjectDir(projectPath)) {
@@ -102,6 +109,38 @@ export function getDependencyInstallPlan(name: 'git' | 'pnpm'): { command: strin
 
 function canBootstrapPnpm(): boolean {
   return checkPnpmAvailable() || checkCommand('corepack') || checkCommand('npm');
+}
+
+export function buildRegistryMirrorEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...(baseEnv || getCommandLookupEnv()),
+    npm_config_registry: NPM_MIRROR_REGISTRY,
+    NPM_CONFIG_REGISTRY: NPM_MIRROR_REGISTRY,
+    COREPACK_NPM_REGISTRY: NPM_MIRROR_REGISTRY,
+  };
+}
+
+type PackageInstallAttempt = {
+  label: string;
+  command: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export function getPackageInstallAttempts(projectPath: string, baseEnv?: NodeJS.ProcessEnv): PackageInstallAttempt[] {
+  const installPlan = getInstallCommand(projectPath);
+  return [
+    { label: '默认源', command: installPlan.command, env: baseEnv },
+    { label: 'npm 镜像源', command: installPlan.command, env: buildRegistryMirrorEnv(baseEnv) },
+  ];
+}
+
+function getCurrentGitBranch(projectPath: string): string {
+  const branchResult = runCommand('git branch --show-current', projectPath, {
+    ignoreError: true,
+    silent: true,
+  });
+  const branch = String(branchResult.stdout || '').trim();
+  return branch || 'main';
 }
 
 export function ensureDependencyInstalled(
@@ -301,12 +340,36 @@ export function handleUpdateOpenClaw(
   }
 
   try {
-    const fetchResult = runCommand('git fetch origin', installPath, { timeout: 60000 });
+    const branch = getCurrentGitBranch(installPath);
+    let fetchTarget = 'origin';
+    let fetchResult = runCommand('git fetch origin', installPath, {
+      timeout: 60000,
+      ignoreError: true,
+      silent: true,
+    });
+    if (!fetchResult.success) {
+      for (let index = 0; index < GITHUB_MIRRORS.length; index++) {
+        const repoUrl = getMirrorRepo(index);
+        const mirrorFetch = runCommand(`git fetch --depth 1 ${repoUrl} ${branch}`, installPath, {
+          timeout: 120000,
+          ignoreError: true,
+          silent: true,
+        });
+        if (mirrorFetch.success) {
+          fetchResult = mirrorFetch;
+          fetchTarget = 'FETCH_HEAD';
+          break;
+        }
+      }
+    }
+
     if (!fetchResult.success) {
       return { success: false, error: fetchResult.stderr || '无法获取远程版本信息' };
     }
 
-    const remoteRef = resolveRemoteDefaultRef(installPath);
+    const remoteRef = fetchTarget === 'origin'
+      ? resolveRemoteDefaultRef(installPath)
+      : fetchTarget;
     const localResult = runCommand('git rev-parse HEAD', installPath);
     const remoteResult = runCommand(`git rev-parse ${remoteRef}`, installPath);
 
@@ -328,9 +391,20 @@ export function handleUpdateOpenClaw(
       return { success: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再更新' };
     }
 
-    const installPlan = getInstallCommand(installPath);
     const buildPlan = getBuildCommand(installPath);
-    const installResult = runCommand(installPlan.command, installPath, { timeout: 300000 });
+    let installResult: ReturnType<typeof runCommand> = { success: false };
+    const installAttempts = getPackageInstallAttempts(installPath);
+    for (let index = 0; index < installAttempts.length; index++) {
+      const attempt = installAttempts[index];
+      installResult = runCommand(attempt.command, installPath, {
+        timeout: 300000,
+        ignoreError: true,
+        env: attempt.env,
+      });
+      if (installResult.success) {
+        break;
+      }
+    }
     if (!installResult.success) {
       return { success: false, error: installResult.stderr || '依赖安装失败' };
     }

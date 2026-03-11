@@ -9,6 +9,11 @@ const GITHUB_MIRRORS = [
   { name: 'GHProxy', url: 'https://mirror.ghproxy.com/https://github.com', api: 'https://mirror.ghproxy.com/https://api.github.com' },
 ];
 
+function getMirrorSourceArchive(mirrorIndex: number = 0, ref: string = 'main', format: 'tar.gz' | 'zip' = 'tar.gz'): string {
+  const mirror = GITHUB_MIRRORS[mirrorIndex] || GITHUB_MIRRORS[0];
+  return `${mirror.url}/${SOURCE_REPO_PATH}/archive/refs/heads/${ref}.${format}`;
+}
+
 function getMirrorRepo(mirrorIndex: number = 0): string {
   const mirror = GITHUB_MIRRORS[mirrorIndex] || GITHUB_MIRRORS[0];
   return `${mirror.url}/${SOURCE_REPO_PATH}.git`;
@@ -38,5 +43,6 @@ export {
   GITHUB_MIRRORS,
   getMirrorRepo,
   getMirrorReleaseApi,
+  getMirrorSourceArchive,
   buildMirrorDownloadUrl,
 };

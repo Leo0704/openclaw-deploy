@@ -236,6 +236,8 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       if (actualPort !== gatewayPort) {
         // 更新页面显示的端口
         $('port').value = String(actualPort);
+        // 更新 payload 中的端口
+        payload.gatewayPort = actualPort;
       }
 
       const precheckLogsEl = $('deploy-logs');

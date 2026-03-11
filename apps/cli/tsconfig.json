@@ -11,7 +11,16 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "baseUrl": "./src",
+    "paths": {
+      "@app/*": ["app/*"],
+      "@core/*": ["core/*"],
+      "@runtime/*": ["runtime/*"],
+      "@platform/*": ["platform/*"],
+      "@packaging/*": ["packaging/*"],
+      "@shared/*": ["shared/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "bin"]

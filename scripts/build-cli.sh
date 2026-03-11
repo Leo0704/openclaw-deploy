@@ -26,6 +26,11 @@ echo -e "${YELLOW}🧹 清理旧文件...${NC}"
 rm -rf dist bin
 mkdir -p bin
 
+# 打包 OpenClaw 源码（包含 .git 目录）
+echo ""
+echo -e "${YELLOW}📦 打包 OpenClaw 源码...${NC}"
+./scripts/pack-openclaw-source.sh
+
 # 安装依赖
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}📦 安装依赖...${NC}"
@@ -42,25 +47,25 @@ echo -e "${YELLOW}📦 打包二进制文件...${NC}"
 echo ""
 
 # macOS ARM64
-echo -e "  ${CYAN}[1/6]${NC} macOS ARM64 (M1/M2/M3)..."
+echo -e "  ${CYAN}[1/7]${NC} macOS ARM64 (M1/M2/M3)..."
 npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64 2>/dev/null
 
 # macOS Intel
-echo -e "  ${CYAN}[2/6]${NC} macOS Intel..."
+echo -e "  ${CYAN}[2/7]${NC} macOS Intel..."
 npx @yao-pkg/pkg dist/index.js --targets node22-macos-x64 --output bin/lobster-macos-x64 2>/dev/null
 
 # 生成 macOS .app zip
 VERSION=$(node -p "require('./package.json').version")
-echo -e "  ${CYAN}[3/6]${NC} 生成 macOS App Bundle..."
+echo -e "  ${CYAN}[3/7]${NC} 生成 macOS App Bundle..."
 ../../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip "${VERSION}"
 ../../scripts/build-macos-app.sh bin/lobster-macos-x64 bin/lobster-macos-x64-app.zip "${VERSION}"
 
 # Windows
-echo -e "  ${CYAN}[4/6]${NC} Windows x64..."
+echo -e "  ${CYAN}[4/7]${NC} Windows x64..."
 npx @yao-pkg/pkg dist/index.js --targets node22-win-x64 --output bin/lobster-win-x64.exe 2>/dev/null
 
 # Linux
-echo -e "  ${CYAN}[5/6]${NC} Linux x64..."
+echo -e "  ${CYAN}[5/7]${NC} Linux x64..."
 npx @yao-pkg/pkg dist/index.js --targets node22-linux-x64 --output bin/lobster-linux-x64 2>/dev/null
 
 echo ""

@@ -590,19 +590,16 @@ export async function performHealthChecks(config: {
   let portCheck = await checkPortAvailability(config.gatewayPort);
   let availablePort = config.gatewayPort;
 
-  // 如果默认端口不可用，自动查找可用端口
+  // 如果默认端口不可用，自动查找可用端口（只尝试 10 个，避免性能问题）
   if (!portCheck.available) {
-    const newPort = await findAvailablePort(config.gatewayPort + 1, 100);
+    const newPort = await findAvailablePort(config.gatewayPort + 1, 10);
     if (newPort) {
       availablePort = newPort;
-      const newPortCheck = await checkPortAvailability(newPort);
-      if (newPortCheck.available) {
-        portCheck = {
-          available: true,
-          port: newPort,
-          message: `默认端口 ${config.gatewayPort} 被占用，已自动切换到可用端口 ${newPort}`,
-        };
-      }
+      portCheck = {
+        available: true,
+        port: newPort,
+        message: `默认端口 ${config.gatewayPort} 被占用，已自动切换到可用端口 ${newPort}`,
+      };
     }
   }
 

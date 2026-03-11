@@ -112,6 +112,7 @@ export interface HealthCheckResult {
 }
 
 export interface PreDeployCheckResult {
+  success: boolean;
   passed: boolean;
   checks: HealthCheckResult[];
   errors: string[];
@@ -621,6 +622,7 @@ export async function performHealthChecks(config: {
   // 7. 网络连接检查已移除 - 部署时会根据实际网络状况自动选择直连或镜像源
 
   return {
+    success: true,
     passed: errors.length === 0,
     checks,
     errors,

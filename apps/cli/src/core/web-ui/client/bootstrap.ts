@@ -25,11 +25,29 @@ export function renderWebUiClientBootstrap(config: Record<string, unknown>, stat
     // 注意：更新检查改为手动触发，不再启动时自动检查
     // 用户可点击"检查更新"按钮或部署后自动检查
 
+    // 检测用户是否正在输入（避免自动刷新干扰）
+    function isUserInteracting() {
+      const activeElement = document.activeElement;
+      if (!activeElement) return false;
+      const tagName = activeElement.tagName.toLowerCase();
+      // 检查是否在输入框、文本域或选择框中
+      if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+        return true;
+      }
+      // 检查是否在配置视图
+      if (state.currentView === 'config') {
+        return true;
+      }
+      return false;
+    }
+
+    // 状态轮询：仅更新状态数据，不重新渲染（除非用户没有在交互）
     setInterval(async () => {
       const res = await api('status');
       if (res.status) {
         state.status = res.status;
-        if (state.currentView === 'dashboard' && !state.deployPolling && (state.currentTab === 'status' || !state.currentTab)) {
+        // 只有在用户没有交互且满足条件时才重新渲染
+        if (!isUserInteracting() && state.currentView === 'dashboard' && !state.deployPolling && (state.currentTab === 'status' || !state.currentTab)) {
           render();
         }
       }

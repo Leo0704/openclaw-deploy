@@ -111,11 +111,15 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
 
       state.deployPolling = false;
       state.deployTask = res.task;
-      renderDeployTask(res.task);
       if (res.task.state === 'succeeded') {
         toast('部署完成！');
+        // 自动进入控制面板
+        enterDashboardAfterDeploy();
       } else if (res.task.state === 'failed') {
+        renderDeployTask(res.task);
         toast(res.task.error || '部署失败', 'error');
+      } else {
+        renderDeployTask(res.task);
       }
     }
 

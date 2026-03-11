@@ -16,7 +16,7 @@ function fail(message) {
 
 const rootPackagePath = path.join(repoRoot, 'package.json');
 const cliPackagePath = path.join(repoRoot, 'apps', 'cli', 'package.json');
-const cliIndexPath = path.join(repoRoot, 'apps', 'cli', 'src', 'index.ts');
+const cliIndexPath = path.join(repoRoot, 'apps', 'cli', 'src', 'app', 'index.ts');
 
 const rootVersion = String(readJson(rootPackagePath).version || '').trim();
 const cliVersion = String(readJson(cliPackagePath).version || '').trim();

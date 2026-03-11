@@ -86,11 +86,10 @@ async function bootstrapApp(deps: {
       console.log('\x1b[33m提示: 请手动打开上面的链接\x1b[0m');
     }
 
-    // 6. 异步检查更新（不阻塞启动）
-    void deps.maybeCheckForUpdates({ force: false });
+    // 注意：不再启动时检查更新，改为用户手动触发或部署后检查
   });
 
-  // 7. 24小时定时检查
+  // 6. 24小时定时检查（部署后才会真正检查）
   const ONE_DAY = 24 * 60 * 60 * 1000;
   setInterval(() => {
     console.log('[更新] 定时检查更新...');

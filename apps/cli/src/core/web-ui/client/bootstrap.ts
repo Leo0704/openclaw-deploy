@@ -22,8 +22,8 @@ export function renderWebUiClientBootstrap(config: Record<string, unknown>, stat
   void status;
   return `    render();
 
-    // 初始化时获取更新状态
-    fetchUpdateStatus();
+    // 注意：更新检查改为手动触发，不再启动时自动检查
+    // 用户可点击"检查更新"按钮或部署后自动检查
 
     setInterval(async () => {
       const res = await api('status');

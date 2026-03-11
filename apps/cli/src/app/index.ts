@@ -52,6 +52,7 @@ const {
 const {
   checkPortAvailability,
   findAvailablePort,
+  performHealthChecks,
 } = require('../core/diagnostics/system-check') as typeof import('../core/diagnostics/system-check');
 
 const {
@@ -160,7 +161,7 @@ const {
   startDeployTask,
 } = require('../core/state/app-state') as typeof import('../core/state/app-state');
 
-const VERSION = '1.0.55';
+const VERSION = '1.0.56';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
@@ -332,6 +333,8 @@ const apiHandlers = createApiHandlers({
   providers: PROVIDERS,
   clawhubMarketUrl: CLAWHUB_MARKET_URL,
   defaultGatewayPort: DEFAULT_GATEWAY_PORT,
+  // 健康检查
+  performHealthChecks,
   // 更新相关
   getUpdateState: loadUpdateState,
   checkForUpdates: (deps: any) => checkForUpdates({

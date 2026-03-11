@@ -116,6 +116,7 @@ export interface PreDeployCheckResult {
   checks: HealthCheckResult[];
   errors: string[];
   warnings: string[];
+  availablePort?: number;
 }
 
 type ExistingInstallState =
@@ -585,115 +586,46 @@ export async function performHealthChecks(config: {
   }
 
   // 5. 端口检查
-  const portCheck = await checkPortAvailability(config.gatewayPort);
+  let portCheck = await checkPortAvailability(config.gatewayPort);
+  let availablePort = config.gatewayPort;
+
+  // 如果默认端口不可用，自动查找可用端口
+  if (!portCheck.available) {
+    const newPort = await findAvailablePort(config.gatewayPort + 1, 100);
+    if (newPort) {
+      availablePort = newPort;
+      const newPortCheck = await checkPortAvailability(newPort);
+      if (newPortCheck.available) {
+        portCheck = {
+          available: true,
+          port: newPort,
+          message: `默认端口 ${config.gatewayPort} 被占用，已自动切换到可用端口 ${newPort}`,
+        };
+      }
+    }
+  }
+
   checks.push({
     name: '端口检查',
     passed: portCheck.available,
     message: portCheck.message || '',
     severity: portCheck.available ? 'info' : 'critical',
-    details: { port: config.gatewayPort, inUseBy: portCheck.inUseBy },
+    details: { port: availablePort, originalPort: config.gatewayPort, inUseBy: portCheck.inUseBy },
   });
   if (!portCheck.available) {
     errors.push(portCheck.message || `端口 ${config.gatewayPort} 不可用`);
   }
 
-  // 6. 安装路径检查
-  switch (installState.kind) {
-    case 'missing':
-      checks.push({
-        name: '安装路径',
-        passed: true,
-        message: '目录不存在，将创建新目录',
-        severity: 'info',
-      });
-      break;
-    case 'empty-dir':
-      checks.push({
-        name: '安装路径',
-        passed: true,
-        message: '目录为空，将在该目录中部署 OpenClaw',
-        severity: 'info',
-      });
-      break;
-    case 'openclaw-project':
-      if (installState.hasGitDir) {
-        checks.push({
-          name: '安装路径',
-          passed: true,
-          message: `检测到现有 OpenClaw 目录，将执行更新 (${installState.packageManager})`,
-          severity: 'warning',
-        });
-        warnings.push(`目录 ${config.installPath} 已存在，将尝试更新现有 OpenClaw`);
-      } else {
-        checks.push({
-          name: '安装路径',
-          passed: true,
-          message: `检测到旧版本 OpenClaw 目录（不支持在线更新），将完全重新安装`,
-          severity: 'warning',
-        });
-        warnings.push(`目录 ${config.installPath} 是旧版本安装（无 .git 目录），将完全重新安装`);
-      }
-      break;
-    case 'file':
-      checks.push({
-        name: '安装路径',
-        passed: false,
-        message: '安装路径指向一个文件，而不是目录',
-        severity: 'critical',
-      });
-      errors.push(`安装路径 ${config.installPath} 指向文件，请改成目录路径`);
-      break;
-    case 'non-openclaw-dir':
-      checks.push({
-        name: '安装路径',
-        passed: false,
-        message: '目录已存在，但不是 OpenClaw 项目目录',
-        severity: 'critical',
-      });
-      errors.push(`安装路径 ${config.installPath} 已存在且不是 OpenClaw 项目，请换一个空目录或正确的 OpenClaw 目录`);
-      break;
-  }
+  // 安装路径检查已移除 - 部署时会做真正的检查
 
-  // 7. 网络连接检查 (非阻塞)
-  try {
-    const { checkNetworkConnectivity } = require('../../shared/network/network-utils');
-    const results = await checkNetworkConnectivity();
-    const reachableCount = results.filter((item: { connected: boolean }) => item.connected).length;
-    const totalCount = results.length;
-    const hasNetwork = reachableCount > 0;
-    const networkMessage = !totalCount
-      ? '未返回网络探测结果'
-      : reachableCount === totalCount
-        ? `网络连接正常 (${reachableCount}/${totalCount} 个探测源可访问)`
-        : hasNetwork
-          ? `部分网络探测可访问 (${reachableCount}/${totalCount})，部署时仍可能重试镜像源`
-          : '网络连接异常';
-    checks.push({
-      name: '网络连接',
-      passed: hasNetwork,
-      message: networkMessage,
-      severity: !hasNetwork ? 'warning' : reachableCount === totalCount ? 'info' : 'warning',
-      details: { reachableCount, totalCount, results },
-    });
-    if (!hasNetwork) {
-      warnings.push('网络连接异常，部署可能失败');
-    } else if (reachableCount !== totalCount) {
-      warnings.push('只有部分网络探测源可访问，部署时可能需要切换镜像源');
-    }
-  } catch {
-    checks.push({
-      name: '网络连接',
-      passed: true,
-      message: '跳过网络检查',
-      severity: 'info',
-    });
-  }
+  // 7. 网络连接检查已移除 - 部署时会根据实际网络状况自动选择直连或镜像源
 
   return {
     passed: errors.length === 0,
     checks,
     errors,
     warnings,
+    availablePort,
   };
 }
 

@@ -231,6 +231,13 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
         gatewayPort,
       });
 
+      // 如果健康检查返回了可用端口，使用该端口
+      const actualPort = health.availablePort || gatewayPort;
+      if (actualPort !== gatewayPort) {
+        // 更新页面显示的端口
+        $('port').value = String(actualPort);
+      }
+
       const precheckLogsEl = $('deploy-logs');
       if (!health.success) {
         precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 预检失败: ' + (health.error || '未知错误') + '</div>';
@@ -241,7 +248,14 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       const checkLines = (health.checks || []).map(check => {
         const level = check.passed ? 'success' : (check.severity === 'warning' ? 'warning' : 'error');
         const icon = check.passed ? '✓' : (check.severity === 'warning' ? '!' : '✗');
-        return '<div class="log-line log-' + level + '">[' + check.name + '] ' + icon + ' ' + check.message + '</div>';
+        let message = check.message;
+        // 为特定检查项添加自动修复提示
+        if (!check.passed && check.name === '包管理器') {
+          message += ' （系统将自动尝试通过 corepack/npm exec 安装）';
+        } else if (!check.passed && check.name === 'Git') {
+          message += ' （仅影响在线更新，不影响部署）';
+        }
+        return '<div class="log-line log-' + level + '">[' + check.name + '] ' + icon + ' ' + message + '</div>';
       }).join('');
       precheckLogsEl.innerHTML = checkLines || '<div class="log-line log-info">未返回检查结果</div>';
 
@@ -256,14 +270,15 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       }
 
       if (health.warnings && health.warnings.length > 0) {
-        precheckLogsEl.innerHTML += '<div class="log-line log-warning" style="margin-top:16px">⚠️ 存在警告项，部署会继续。</div>';
+        precheckLogsEl.innerHTML += '<div class="log-line log-info" style="margin-top:16px">💡 系统将自动尝试修复上述问题，如失败会切换备用方案重试。</div>';
       }
 
       if (hasRecoveryActions) {
         if (recoveryCards) {
           $('main-card').insertAdjacentHTML('beforeend', recoveryCards);
         }
-        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动尝试安装缺失依赖）</button><button class="btn btn-secondary" onclick="goDashboard()">稍后再说</button></div>');
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="log-line log-info" style="margin-top:16px">💡 点击继续后，系统将自动尝试安装缺失依赖（pnpm/corepack/npm exec）。</div>');
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动修复）</button><button class="btn btn-secondary" onclick="goDashboard()">稍后再说</button></div>');
         state.pendingDeployPayload = payload;
         return;
       }

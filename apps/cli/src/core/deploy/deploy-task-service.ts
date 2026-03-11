@@ -24,6 +24,9 @@ const {
   normalizeProjectPath,
 } = require('../../runtime/openclaw/openclaw-project') as typeof import('../../runtime/openclaw/openclaw-project');
 const {
+  getOpenClawConfigPath,
+} = require('../../platform/storage/storage-paths') as typeof import('../../platform/storage/storage-paths');
+const {
   checkCommand,
   runCommandArgs,
   runCommandStreaming,
@@ -359,6 +362,21 @@ export async function performDeployTask(
           deps.addLog('错误: 目录已存在且不为空', 'error');
           return { success: false, error: '安装路径已存在且不是 OpenClaw 项目，请换一个空目录' };
         }
+      }
+    }
+
+    // 清理旧配置（新安装或路径变化时清理 ~/.openclaw/ 目录）
+    const previousInstallPath = String(baseConfig.installPath || '');
+    const newInstallPath = String(data.installPath || '');
+    const openClawConfigDir = path.dirname(getOpenClawConfigPath());
+    const shouldCleanConfig = !previousInstallPath || (newInstallPath && previousInstallPath !== newInstallPath);
+    if (shouldCleanConfig && fs.existsSync(openClawConfigDir)) {
+      // 清理旧配置：首次部署或路径变化时
+      try {
+        fs.rmSync(openClawConfigDir, { recursive: true, force: true });
+        deps.addLog(`已清理旧配置目录: ${openClawConfigDir}`, 'info');
+      } catch {
+        // 忽略清理失败，不阻塞部署
       }
     }
 

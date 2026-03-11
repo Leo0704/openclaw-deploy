@@ -211,7 +211,6 @@ async function handleStartInternal(
   }
   const installPathCheck = validateInstallPathForUse(String(config.installPath || '').trim(), {
     requireProject: true,
-    probeWritable: true,
   });
   if (!installPathCheck.valid) {
     return { success: false, error: installPathCheck.error || '请先部署' };

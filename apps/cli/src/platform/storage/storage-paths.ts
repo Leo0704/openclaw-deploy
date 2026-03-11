@@ -2,6 +2,7 @@
  * 应用存储路径
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getPlatformAdapter } from '../index';
@@ -29,26 +30,43 @@ export function getOpenClawConfigPath(): string {
   return path.join(os.homedir(), '.openclaw', 'openclaw.json');
 }
 
+function getFallbackOpenClawBaseDir(): string {
+  return path.join(os.homedir(), '.openclaw');
+}
+
+function canUseProjectManagedStorage(installPath: string): boolean {
+  const managedDir = path.join(installPath, '.claude');
+  try {
+    fs.mkdirSync(managedDir, { recursive: true });
+    const probeFile = path.join(managedDir, `.lobster-write-test-${process.pid}-${Date.now()}`);
+    fs.writeFileSync(probeFile, '');
+    fs.rmSync(probeFile, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getManagedOpenClawBaseDir(config: Record<string, unknown>): string {
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (installPath && isOpenClawProjectDir(installPath) && canUseProjectManagedStorage(installPath)) {
+    return path.join(installPath, '.claude');
+  }
+  return getFallbackOpenClawBaseDir();
+}
+
 /**
  * 获取 OpenClaw 配置文件路径（根据安装路径决定）
  */
 export function getManagedOpenClawConfigPath(config: Record<string, unknown>): string {
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
-  if (installPath && isOpenClawProjectDir(installPath)) {
-    return path.join(installPath, '.claude', 'openclaw.json');
-  }
-  return getOpenClawConfigPath();
+  return path.join(getManagedOpenClawBaseDir(config), 'openclaw.json');
 }
 
 /**
  * 获取 OpenClaw 状态目录
  */
 export function getManagedOpenClawStateDir(config: Record<string, unknown>): string {
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
-  if (installPath && isOpenClawProjectDir(installPath)) {
-    return path.join(installPath, '.claude', 'state');
-  }
-  return path.join(os.homedir(), '.openclaw');
+  return path.join(getManagedOpenClawBaseDir(config), 'state');
 }
 
 /**

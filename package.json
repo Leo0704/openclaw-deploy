@@ -1,6 +1,6 @@
 {
   "name": "lobster-assistant",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "private": true,
   "description": "龙虾助手 - OpenClaw 一键部署工具",
   "scripts": {
@@ -8,7 +8,9 @@
     "start": "cd apps/cli && node dist/index.js",
     "pkg": "cd apps/cli && npm run pkg",
     "clean": "cd apps/cli && npm run clean",
-    "validate:release-version": "node scripts/validate-release-version.js"
+    "validate:release-version": "node scripts/validate-release-version.js",
+    "test": "cd tests && npm test",
+    "test:watch": "cd tests && npm run test:watch"
   },
   "keywords": [
     "openclaw",

@@ -3,6 +3,7 @@
  */
 
 import * as os from 'os';
+import * as path from 'path';
 import type { PlatformAdapter } from './types';
 
 export class WindowsPlatformAdapter implements PlatformAdapter {
@@ -14,8 +15,11 @@ export class WindowsPlatformAdapter implements PlatformAdapter {
   }
 
   normalizeProjectPath(projectPath: string): string {
-    // Windows 路径归一化：反斜杠转统一格式，处理大小写
-    return projectPath.replace(/\\/g, '/').toLowerCase();
+    const rawPath = String(projectPath || '').trim();
+    if (!rawPath) {
+      return '';
+    }
+    return path.win32.normalize(rawPath);
   }
 
   validateInstallPath(projectPath: string): { valid: boolean; error?: string } {
@@ -49,7 +53,7 @@ export class WindowsPlatformAdapter implements PlatformAdapter {
   getBrowserOpenCommand(url: string): { file: string; args: string[] } | null {
     return {
       file: 'cmd',
-      args: ['/c', 'start', url],
+      args: ['/c', 'start', '', url],
     };
   }
 

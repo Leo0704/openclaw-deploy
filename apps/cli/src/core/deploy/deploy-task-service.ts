@@ -1,6 +1,10 @@
 const fs = require('fs') as typeof import('fs');
 const os = require('os') as typeof import('os');
 const path = require('path') as typeof import('path');
+const {
+  getDefaultInstallPath,
+  validateInstallPathForUse,
+} = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
 
 const {
   checkDependencies,
@@ -96,7 +100,13 @@ export async function performDeployTask(
       };
     }
   }
-  const installPath = normalizeProjectPath((data.installPath as string) || path.join(os.homedir(), 'openclaw'));
+  const installPathInput = normalizeProjectPath((data.installPath as string) || getDefaultInstallPath());
+  const installPathValidation = validateInstallPathForUse(installPathInput, { probeWritable: true });
+  if (!installPathValidation.valid) {
+    deps.addLog(`错误: ${installPathValidation.error}`, 'error');
+    return { success: false, error: installPathValidation.error || '安装路径无效' };
+  }
+  const installPath = installPathValidation.normalizedPath;
   const gatewayPort = (data.gatewayPort as number) || deps.defaultGatewayPort;
   const config = { ...baseConfig };
 
@@ -230,15 +240,6 @@ export async function performDeployTask(
 
   try {
     deps.addLog('开始部署...');
-
-    // 路径验证
-    const invalidInstallPathPattern = os.platform() === 'win32'
-      ? /[;&|`$(){}[\]<>!]/
-      : /[;&|`$(){}[\]<>!\\]/;
-    if (invalidInstallPathPattern.test(installPath)) {
-      deps.addLog('错误: 安装路径包含非法字符', 'error');
-      return { success: false, error: '安装路径包含非法字符，请使用普通目录路径' };
-    }
 
     if (!data.apiKey) {
       deps.addLog('错误: 未提供 API Key', 'error');

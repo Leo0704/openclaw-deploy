@@ -13,6 +13,9 @@ const { spawn, execSync } = require('child_process') as typeof import('child_pro
 
 const { checkPortAvailability } = require('../../core/diagnostics/system-check') as typeof import('../../core/diagnostics/system-check');
 const {
+  validateInstallPathForUse,
+} = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
+const {
   getManagedOpenClawConfigPath,
   getManagedOpenClawStateDir,
   getOpenClawStartCommand,
@@ -203,10 +206,17 @@ async function handleStartInternal(
   config: Record<string, unknown>,
   deps: GatewayLifecycleDeps
 ): Promise<Record<string, unknown>> {
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (!config.apiKey) {
     return { success: false, error: '请先配置 API Key' };
   }
+  const installPathCheck = validateInstallPathForUse(String(config.installPath || '').trim(), {
+    requireProject: true,
+    probeWritable: true,
+  });
+  if (!installPathCheck.valid) {
+    return { success: false, error: installPathCheck.error || '请先部署' };
+  }
+  const installPath = installPathCheck.normalizedPath;
   if (!installPath || !isOpenClawProjectDir(installPath)) {
     return { success: false, error: '请先部署' };
   }

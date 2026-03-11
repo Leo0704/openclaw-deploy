@@ -4,7 +4,7 @@
  */
 
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { getPlatformAdapter } from '../index';
 
 function isValidUrl(url: string): boolean {
@@ -39,16 +39,16 @@ export function openBrowser(url: string): { success: boolean; error?: string; fa
 
   try {
     if (adapter.id === 'windows') {
-      execSync(`start "" "${url}"`, { timeout: 5000, shell: '/bin/sh' });
+      execFileSync(command.file, command.args, { timeout: 5000, windowsHide: true });
     } else if (adapter.id === 'macos') {
-      execSync(`${command.file} "${url}"`, { timeout: 5000 });
+      execFileSync(command.file, command.args, { timeout: 5000 });
     } else {
       // Linux 尝试多个命令
       const commands = [command.file, 'google-chrome', 'firefox'];
       for (const cmd of commands) {
         if (!cmd) continue;
         try {
-          execSync(`${cmd} "${url}"`, { timeout: 5000 });
+          execFileSync(cmd, [url], { timeout: 5000 });
           return { success: true };
         } catch {
           continue;

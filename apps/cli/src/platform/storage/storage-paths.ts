@@ -48,6 +48,10 @@ function canUseProjectManagedStorage(installPath: string): boolean {
 }
 
 function getManagedOpenClawBaseDir(config: Record<string, unknown>): string {
+  if (os.platform() === 'win32') {
+    return getFallbackOpenClawBaseDir();
+  }
+
   const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (installPath && isOpenClawProjectDir(installPath) && canUseProjectManagedStorage(installPath)) {
     return path.join(installPath, '.claude');

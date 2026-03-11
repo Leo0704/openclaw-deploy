@@ -72,6 +72,20 @@ function getBundledSourcePath(): { path: string; format: 'tar.gz' | 'zip' } | nu
   return null;
 }
 
+function materializeBundledAsset(assetPath: string, destDir: string): { success: boolean; path?: string; error?: string } {
+  try {
+    fs.mkdirSync(destDir, { recursive: true });
+    const targetPath = path.join(destDir, path.basename(assetPath));
+    fs.copyFileSync(assetPath, targetPath);
+    return { success: true, path: targetPath };
+  } catch (error) {
+    return {
+      success: false,
+      error: `内置源码包复制失败: ${error instanceof Error ? error.message : '未知错误'}`,
+    };
+  }
+}
+
 type DeployLogLevel = 'info' | 'success' | 'error' | 'warning';
 
 type DeployTaskDeps = {
@@ -194,10 +208,16 @@ export async function performDeployTask(
 
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-bundled-'));
     const extractDir = path.join(tempRoot, 'extract');
+    const materializedDir = path.join(tempRoot, 'asset');
     fs.mkdirSync(extractDir, { recursive: true });
 
     try {
-      const extractResult = await extractSourceArchive(bundledSource.path, extractDir, bundledSource.format);
+      const materializedAsset = materializeBundledAsset(bundledSource.path, materializedDir);
+      if (!materializedAsset.success || !materializedAsset.path) {
+        return { success: false, error: materializedAsset.error || '内置源码包复制失败' };
+      }
+
+      const extractResult = await extractSourceArchive(materializedAsset.path, extractDir, bundledSource.format);
       if (!extractResult.success) {
         return { success: false, error: `内置源码解压失败: ${extractResult.error}` };
       }

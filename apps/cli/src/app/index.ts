@@ -160,7 +160,7 @@ const {
   startDeployTask,
 } = require('../core/state/app-state') as typeof import('../core/state/app-state');
 
-const VERSION = '1.0.52';
+const VERSION = '1.0.53';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;

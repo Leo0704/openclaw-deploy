@@ -8,6 +8,7 @@ const {
   getManagedOpenClawStateDir,
   isOpenClawProjectDir,
   detectProjectPackageManager,
+  normalizeProjectPath,
 } = require('./openclaw-project') as typeof import('./openclaw-project');
 
 const {
@@ -294,19 +295,20 @@ export function handleUpdateOpenClaw(
     getUserFriendlyMessage: (error: unknown) => string;
   }
 ): Record<string, unknown> {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!installPath || !isOpenClawProjectDir(installPath)) {
     return { success: false, error: '请先部署' };
   }
 
   try {
-    const fetchResult = runCommand('git fetch origin', config.installPath as string, { timeout: 60000 });
+    const fetchResult = runCommand('git fetch origin', installPath, { timeout: 60000 });
     if (!fetchResult.success) {
       return { success: false, error: fetchResult.stderr || '无法获取远程版本信息' };
     }
 
-    const remoteRef = resolveRemoteDefaultRef(config.installPath as string);
-    const localResult = runCommand('git rev-parse HEAD', config.installPath as string);
-    const remoteResult = runCommand(`git rev-parse ${remoteRef}`, config.installPath as string);
+    const remoteRef = resolveRemoteDefaultRef(installPath);
+    const localResult = runCommand('git rev-parse HEAD', installPath);
+    const remoteResult = runCommand(`git rev-parse ${remoteRef}`, installPath);
 
     if (!localResult.success || !remoteResult.success) {
       return { success: false, error: '无法获取版本信息' };
@@ -316,24 +318,24 @@ export function handleUpdateOpenClaw(
       return { success: true, message: '已是最新版本' };
     }
 
-    const resetResult = runCommand(`git reset --hard ${remoteRef}`, config.installPath as string);
+    const resetResult = runCommand(`git reset --hard ${remoteRef}`, installPath);
     if (!resetResult.success) {
       return { success: false, error: resetResult.stderr || '更新失败' };
     }
 
-    const projectPackageManager = detectProjectPackageManager(config.installPath as string);
+    const projectPackageManager = detectProjectPackageManager(installPath);
     if (projectPackageManager === 'pnpm' && !canBootstrapPnpm()) {
       return { success: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再更新' };
     }
 
-    const installPlan = getInstallCommand(config.installPath as string);
-    const buildPlan = getBuildCommand(config.installPath as string);
-    const installResult = runCommand(installPlan.command, config.installPath as string, { timeout: 300000 });
+    const installPlan = getInstallCommand(installPath);
+    const buildPlan = getBuildCommand(installPath);
+    const installResult = runCommand(installPlan.command, installPath, { timeout: 300000 });
     if (!installResult.success) {
       return { success: false, error: installResult.stderr || '依赖安装失败' };
     }
 
-    const buildResult = runCommand(buildPlan.command, config.installPath as string, { timeout: 300000, ignoreError: true });
+    const buildResult = runCommand(buildPlan.command, installPath, { timeout: 300000, ignoreError: true });
     if (!buildResult.success) {
       return { success: false, error: buildResult.stderr || '构建失败' };
     }
@@ -355,7 +357,7 @@ export async function handleUninstallOpenClaw(
     clearLogs: () => void;
   }
 ): Promise<Record<string, unknown>> {
-  const installPath = String(config.installPath || '').trim();
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   const managedStateDir = getManagedOpenClawStateDir(config);
   const removedPaths: string[] = [];
 

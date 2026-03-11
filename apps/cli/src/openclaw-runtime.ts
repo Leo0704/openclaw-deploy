@@ -11,6 +11,7 @@ const {
   getManagedOpenClawStateDir,
   getPnpmInvocation,
   isOpenClawProjectDir,
+  normalizeProjectPath,
   readManagedOpenClawConfig,
   readOpenClawRuntimeConfig,
   resolveOpenClawWorkspaceDir,
@@ -320,11 +321,10 @@ function getOpenClawGatewayChannelsReport(
   config: Record<string, unknown>,
   options: { probe?: boolean; timeoutMs?: number } = {}
 ): GatewayChannelsStatusReport | null {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const projectPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!projectPath || !isOpenClawProjectDir(projectPath)) {
     return null;
   }
-
-  const projectPath = config.installPath as string;
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
   const gatewayToken = readGatewayToken(config);
   if (!gatewayToken) {
@@ -401,7 +401,8 @@ function listSkillsFromRoot(rootDir: string, source: string, removable: boolean)
 }
 
 function getInstalledOpenClawSkills(config: Record<string, unknown>): InstalledSkillEntry[] {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const projectPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!projectPath || !isOpenClawProjectDir(projectPath)) {
     return [];
   }
 
@@ -416,7 +417,7 @@ function getInstalledOpenClawSkills(config: Record<string, unknown>): InstalledS
     : [];
 
   const sources: Array<{ dir: string; source: string; removable: boolean }> = [
-    { dir: path.join(config.installPath as string, 'skills'), source: 'OpenClaw 内置', removable: false },
+    { dir: path.join(projectPath, 'skills'), source: 'OpenClaw 内置', removable: false },
     { dir: getManagedOpenClawSkillsDir(config), source: 'OpenClaw 已管理', removable: true },
     { dir: path.join(os.homedir(), '.agents', 'skills'), source: '个人 .agents', removable: true },
     { dir: path.join(workspaceDir, '.agents', 'skills'), source: '项目 .agents', removable: true },
@@ -435,11 +436,10 @@ function getInstalledOpenClawSkills(config: Record<string, unknown>): InstalledS
 }
 
 export async function getInstalledOpenClawSkillsFromStatus(config: Record<string, unknown>): Promise<InstalledSkillEntry[]> {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const projectPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!projectPath || !isOpenClawProjectDir(projectPath)) {
     return [];
   }
-
-  const projectPath = config.installPath as string;
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
   const gatewayToken = readGatewayToken(config);
 
@@ -479,10 +479,10 @@ export async function getInstalledOpenClawSkillsFromStatus(config: Record<string
 }
 
 function getOpenClawGatewaySkillReport(config: Record<string, unknown>): OpenClawSkillStatusReport | null {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const projectPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!projectPath || !isOpenClawProjectDir(projectPath)) {
     return null;
   }
-  const projectPath = config.installPath as string;
   const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
   const gatewayToken = readGatewayToken(config);
   if (!gatewayToken) {
@@ -512,7 +512,8 @@ export function getOpenClawSkillStatusEntry(
   config: Record<string, unknown>,
   skillId: string
 ): Record<string, unknown> | null {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const projectPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!projectPath || !isOpenClawProjectDir(projectPath)) {
     return null;
   }
 
@@ -529,7 +530,6 @@ export function getOpenClawSkillStatusEntry(
     return gatewayEntry as Record<string, unknown>;
   }
 
-  const projectPath = config.installPath as string;
   const infoCommand = getOpenClawCliCommand(projectPath, ['skills', 'info', normalizedSkillId, '--json']);
   const infoResult = runCommandArgs(infoCommand.file, projectPath, {
     args: infoCommand.args,
@@ -551,7 +551,8 @@ export function getOpenClawSkillStatusEntry(
 }
 
 export function resolveRemovableSkillPath(config: Record<string, unknown>, skillId: string): { path: string; source: string } | null {
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  const projectPath = normalizeProjectPath(String(config.installPath || '').trim());
+  if (!projectPath || !isOpenClawProjectDir(projectPath)) {
     return null;
   }
 

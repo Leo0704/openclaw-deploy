@@ -2,6 +2,7 @@ const fs = require('fs') as typeof import('fs');
 
 const {
   isOpenClawProjectDir,
+  normalizeProjectPath,
   readManagedOpenClawConfig,
   writeManagedOpenClawConfig,
 } = require('./openclaw-project') as typeof import('./openclaw-project');
@@ -167,16 +168,17 @@ export function handleSaveFeishuChannel(data: Record<string, unknown>, config: R
 
 function validateSkillInstallRequest(data: Record<string, unknown>, config: Record<string, unknown>): { skillId?: string; error?: string } {
   const skillId = String(data.skill || '').trim();
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (!skillId) {
     return { error: '请指定技能名称' };
   }
   if (!/^[a-z0-9][a-z0-9-_./]{0,127}$/i.test(skillId)) {
     return { error: '技能名称格式不正确' };
   }
-  if (!config.installPath || !fs.existsSync(config.installPath as string)) {
+  if (!installPath || !fs.existsSync(installPath)) {
     return { error: '请先部署 OpenClaw' };
   }
-  if (!isOpenClawProjectDir(config.installPath as string)) {
+  if (!isOpenClawProjectDir(installPath)) {
     return { error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
   }
   return { skillId };
@@ -224,6 +226,7 @@ export async function handleSkillInstall(data: Record<string, unknown>, config: 
     return { success: false, error: validation.error };
   }
   const skillId = validation.skillId as string;
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
 
   try {
     const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
@@ -261,13 +264,13 @@ export async function handleSkillInstall(data: Record<string, unknown>, config: 
 
     console.log(`[技能] 正在安装: ${skillId} (${installId})`);
     const installCall = buildGatewayCallCommand(
-      config.installPath as string,
+      installPath,
       gatewayPort,
       gatewayToken,
       'skills.install',
       { name: skillId, installId, timeoutMs: 120000 }
     );
-    const result = runCommandArgs(installCall.file, config.installPath as string, {
+    const result = runCommandArgs(installCall.file, installPath, {
       args: installCall.args,
       env: getManagedOpenClawEnv(config),
       timeout: 180000,
@@ -299,16 +302,17 @@ export async function handleSkillInstall(data: Record<string, unknown>, config: 
 
 export async function handleSkillUninstall(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const skillId = String(data.skill || '').trim();
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (!skillId) {
     return { success: false, error: '请指定技能名称' };
   }
   if (!/^[a-z0-9][a-z0-9-_./]{0,127}$/i.test(skillId) || skillId.includes('..')) {
     return { success: false, error: '技能名称格式不正确' };
   }
-  if (!config.installPath) {
+  if (!installPath) {
     return { success: false, error: '请先部署 OpenClaw' };
   }
-  if (!isOpenClawProjectDir(config.installPath as string)) {
+  if (!isOpenClawProjectDir(installPath)) {
     return { success: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
   }
 
@@ -329,7 +333,7 @@ export async function handleSkillUninstall(data: Record<string, unknown>, config
     const nodePath = require('path') as typeof import('path');
     const nodeOs = require('os') as typeof import('os');
     const resolvedAbs = nodePath.resolve(resolved.path);
-    const installPathAbs = nodePath.resolve(String(config.installPath || ''));
+    const installPathAbs = nodePath.resolve(installPath);
     const homedirAbs = nodePath.resolve(nodeOs.homedir());
     if (
       resolvedAbs === installPathAbs ||

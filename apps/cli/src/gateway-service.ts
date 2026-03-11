@@ -11,6 +11,7 @@ const {
   getOpenClawStartCommand,
   isOpenClawProjectDir,
   mergeOpenClawConfigSections,
+  normalizeProjectPath,
   readManagedOpenClawConfig,
 } = require('./openclaw-project') as typeof import('./openclaw-project');
 const {
@@ -140,10 +141,11 @@ export async function handleStart(
   config: Record<string, unknown>,
   deps: GatewayLifecycleDeps
 ): Promise<Record<string, unknown>> {
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (!config.apiKey) {
     return { success: false, error: '请先配置 API Key' };
   }
-  if (!config.installPath || !isOpenClawProjectDir(config.installPath as string)) {
+  if (!installPath || !isOpenClawProjectDir(installPath)) {
     return { success: false, error: '请先部署' };
   }
   const currentStatus = deps.getGatewayStatus();
@@ -151,7 +153,7 @@ export async function handleStart(
     return { success: true, message: '服务已在运行中' };
   }
 
-  const runtimeReadiness = checkOpenClawRuntimeReadiness(config.installPath as string);
+  const runtimeReadiness = checkOpenClawRuntimeReadiness(installPath);
   if (!runtimeReadiness.ready) {
     return { success: false, error: runtimeReadiness.error || 'OpenClaw 运行环境未就绪' };
   }
@@ -279,7 +281,7 @@ export async function handleStart(
       [provider.envKey]: String(config.apiKey || ''),
     };
 
-    const startCommand = getOpenClawStartCommand(config.installPath as string, gatewayPort);
+    const startCommand = getOpenClawStartCommand(installPath, gatewayPort);
     deps.appendLog('info', `启动命令: ${startCommand}`);
 
     const parsedCommand = parseCommandForSpawn(startCommand);
@@ -291,7 +293,7 @@ export async function handleStart(
 
     const isWin = os.platform() === 'win32';
     const processRef = spawn(parsedCommand.file, parsedCommand.args, {
-      cwd: config.installPath as string,
+      cwd: installPath,
       env,
       shell: isWin,
       stdio: ['ignore', 'pipe', 'pipe'],

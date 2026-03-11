@@ -12,9 +12,10 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
   const DEFAULT_WEB_PORT = deps.defaultWebPort;
   const DEFAULT_GATEWAY_PORT = deps.defaultGatewayPort;
   const CLAWHUB_MARKET_URL = deps.clawhubMarketUrl;
+  const DEFAULT_INSTALL_PATH = JSON.stringify(path.join(os.homedir(), 'openclaw'));
   void status;
   return `
-    function render() {
+    function renderDashboard() {
       state.currentView = 'dashboard';
       state.deployPolling = false;
       state.deployTask = null;
@@ -121,7 +122,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
               <div class="wizard-step-title">第 3 步：部署位置与端口</div>
               <div class="form-group">
                 <label class="form-label">安装路径</label>
-                <input type="text" id="path" class="form-input" value="\${c.installPath || '${path.join(os.homedir(), 'openclaw')}'}">
+                <input type="text" id="path" class="form-input" value="\${c.installPath || ${DEFAULT_INSTALL_PATH}}">
               </div>
               <div class="form-group">
                 <label class="form-label">端口号</label>

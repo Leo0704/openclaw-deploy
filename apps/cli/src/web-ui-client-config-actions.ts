@@ -181,7 +181,7 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
         <div class="actions">
           <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
           <button class="btn btn-secondary" onclick="testConnection()">\${isCustom ? '验证 Endpoint' : '测试连接'}</button>
-          <button class="btn btn-secondary" onclick="render()">取消</button>
+          <button class="btn btn-secondary" onclick="goDashboard()">取消</button>
         </div>
 
         <div id="test-result" style="margin-top:16px;display:none"></div>
@@ -290,7 +290,7 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
       }
 
       const res = await api('config', configData);
-      if (res.success) { state.config = res.config; toast('配置已保存！'); render(); }
+      if (res.success) { state.config = res.config; toast('配置已保存！'); goDashboard(); }
       else toast(res.error || '保存失败', 'error');
     }
 

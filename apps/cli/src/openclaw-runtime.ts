@@ -9,6 +9,7 @@ const {
   getManagedOpenClawConfigPath,
   getManagedOpenClawSkillsDir,
   getManagedOpenClawStateDir,
+  getPnpmInvocation,
   isOpenClawProjectDir,
   readManagedOpenClawConfig,
   readOpenClawRuntimeConfig,
@@ -281,9 +282,11 @@ function buildFeishuChannelStatus(
 
 export function getOpenClawCliCommand(projectPath: string, args: string[]): { file: string; args: string[] } {
   const pm = detectProjectPackageManager(projectPath);
-  return pm === 'pnpm'
-    ? { file: 'pnpm', args: ['openclaw', ...args] }
-    : { file: 'npm', args: ['run', 'openclaw', '--', ...args] };
+  if (pm === 'pnpm') {
+    const invocation = getPnpmInvocation();
+    return { file: invocation.file, args: [...invocation.args, 'openclaw', ...args] };
+  }
+  return { file: 'npm', args: ['run', 'openclaw', '--', ...args] };
 }
 
 export function buildGatewayCallCommand(projectPath: string, gatewayPort: number, gatewayToken: string, method: string, params: Record<string, unknown>) {

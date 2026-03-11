@@ -16,6 +16,7 @@ const {
   getBuildCommand,
   getInstallCommand,
   isOpenClawProjectDir,
+  normalizeProjectPath,
 } = require('./openclaw-project') as typeof import('./openclaw-project');
 const { runCommandStreaming } = require('./process-utils') as typeof import('./process-utils');
 const { getCommandLookupEnv } = require('./system-check') as typeof import('./system-check');
@@ -42,7 +43,7 @@ export async function performDeployTask(
   baseConfig: Record<string, unknown>,
   deps: DeployTaskDeps
 ): Promise<Record<string, unknown>> {
-  const installPath = (data.installPath as string) || path.join(os.homedir(), 'openclaw');
+  const installPath = normalizeProjectPath((data.installPath as string) || path.join(os.homedir(), 'openclaw'));
   const gatewayPort = (data.gatewayPort as number) || deps.defaultGatewayPort;
   const config = { ...baseConfig };
 
@@ -94,7 +95,10 @@ export async function performDeployTask(
   try {
     deps.addLog('开始部署...');
 
-    if (/[;&|`$(){}[\]<>!\\]/.test(installPath)) {
+    const invalidInstallPathPattern = os.platform() === 'win32'
+      ? /[;&|`$(){}[\]<>!]/
+      : /[;&|`$(){}[\]<>!\\]/;
+    if (invalidInstallPathPattern.test(installPath)) {
       deps.addLog('错误: 安装路径包含非法字符', 'error');
       return { success: false, error: '安装路径包含非法字符，请使用普通目录路径' };
     }

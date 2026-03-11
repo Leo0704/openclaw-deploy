@@ -60,7 +60,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
         $('enter-dashboard-btn')?.addEventListener('click', enterDashboardAfterDeploy);
       } else if (taskState === 'failed') {
         actionsEl.innerHTML = '<button class="btn btn-primary" id="deploy-retry-btn">返回重试</button>';
-        $('deploy-retry-btn')?.addEventListener('click', render);
+        $('deploy-retry-btn')?.addEventListener('click', goDashboard);
       } else {
         actionsEl.innerHTML = '<button class="btn btn-secondary" disabled>部署进行中...</button>';
       }
@@ -81,7 +81,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
           installed: true,
         };
       }
-      render();
+      goDashboard();
     }
 
     async function pollDeployTask() {
@@ -234,7 +234,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       const precheckLogsEl = $('deploy-logs');
       if (!health.success) {
         precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 预检失败: ' + (health.error || '未知错误') + '</div>';
-        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回</button></div>';
+        $('main-card').innerHTML += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="goDashboard()">返回</button></div>';
         return;
       }
 
@@ -251,7 +251,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       if (health.errors && health.errors.length > 0) {
         precheckLogsEl.innerHTML += '<div class="log-line log-error" style="margin-top:16px">❌ 发现阻塞问题，已停止部署。</div>';
         $('main-card').insertAdjacentHTML('beforeend', recoveryCards);
-        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回修正</button></div>');
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="goDashboard()">返回修正</button></div>');
         return;
       }
 
@@ -263,7 +263,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
         if (recoveryCards) {
           $('main-card').insertAdjacentHTML('beforeend', recoveryCards);
         }
-        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动尝试安装缺失依赖）</button><button class="btn btn-secondary" onclick="render()">稍后再说</button></div>');
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动尝试安装缺失依赖）</button><button class="btn btn-secondary" onclick="goDashboard()">稍后再说</button></div>');
         state.pendingDeployPayload = payload;
         return;
       }

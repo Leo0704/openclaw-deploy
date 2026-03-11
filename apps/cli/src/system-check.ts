@@ -27,8 +27,12 @@ function getPreferredPathEntries(): string[] {
     : os.platform() === 'win32'
       ? [
           path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'nodejs'),
-          path.join(process.env['AppData'] || '', 'npm'),
-        ].filter(Boolean)
+          // npm global packages path - try multiple common locations
+          process.env['AppData'] ? path.join(process.env['AppData'], 'npm') : null,
+          process.env['APPDATA'] ? path.join(process.env['APPDATA'], 'npm') : null,
+          path.join(os.homedir(), 'AppData', 'Roaming', 'npm'),
+          path.join(os.homedir(), 'AppData', 'Local', 'npm'),
+        ].filter((p): p is string => Boolean(p))
       : [];
 
   return Array.from(new Set([...preferred, ...entries]));
@@ -408,6 +412,66 @@ function getCommandVersion(cmd: string): string | null {
 }
 
 /**
+ * 获取 npm 全局安装路径
+ */
+function getNpmGlobalPrefix(): string | null {
+  try {
+    const env = getCommandLookupEnv();
+    const output = execSync('npm config get prefix', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+    }).trim();
+    return output || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 检查 pnpm 是否可用 (Windows 上更健壮的检测)
+ */
+export function checkPnpmAvailable(): boolean {
+  // 首先尝试常规检查
+  if (checkCommand('pnpm')) {
+    return true;
+  }
+
+  // Windows 上尝试查找 pnpm 可执行文件
+  if (os.platform() === 'win32') {
+    const prefix = getNpmGlobalPrefix();
+    if (prefix) {
+      const possiblePaths = [
+        path.join(prefix, 'pnpm.cmd'),
+        path.join(prefix, 'pnpm.exe'),
+        path.join(prefix, 'pnpm'),
+        path.join(prefix, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+      ];
+      for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+          return true;
+        }
+      }
+    }
+
+    // 尝试常见的 npm 全局路径
+    const commonPaths = [
+      path.join(process.env['AppData'] || '', 'npm', 'pnpm.cmd'),
+      path.join(process.env['APPDATA'] || '', 'npm', 'pnpm.cmd'),
+      path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'pnpm.cmd'),
+      path.join(os.homedir(), 'AppData', 'Local', 'npm', 'pnpm.cmd'),
+    ];
+    for (const p of commonPaths) {
+      if (p && fs.existsSync(p)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * 检查所有依赖
  */
 export function checkDependencies(): DependencyResult {
@@ -416,7 +480,7 @@ export function checkDependencies(): DependencyResult {
   return {
     git: checkCommand('git'),
     npm: checkCommand('npm'),
-    pnpm: checkCommand('pnpm'),
+    pnpm: checkPnpmAvailable(),
     node: {
       valid: nodeCheck.valid,
       version: nodeCheck.current,
@@ -469,28 +533,28 @@ export async function performHealthChecks(config: {
 
   // 3. npm/pnpm 检查
   const npmAvailable = checkCommand('npm');
-  const pnpmAvailable = checkCommand('pnpm');
+  const pnpmReady = checkPnpmAvailable();
   const requiresPnpm = installState.kind === 'openclaw-project' ? installState.packageManager === 'pnpm' : true;
   checks.push({
     name: '包管理器',
-    passed: requiresPnpm ? pnpmAvailable : npmAvailable,
+    passed: requiresPnpm ? pnpmReady : npmAvailable,
     message: requiresPnpm
-      ? pnpmAvailable
+      ? pnpmReady
         ? installState.kind === 'openclaw-project'
           ? '检测到当前 OpenClaw 目录要求 pnpm，pnpm 已安装'
           : 'OpenClaw 部署要求 pnpm，pnpm 已安装'
         : installState.kind === 'openclaw-project'
-          ? '检测到当前 OpenClaw 目录要求 pnpm，但未找到 pnpm'
-          : 'OpenClaw 部署要求 pnpm，但未找到 pnpm'
+          ? '检测到当前 OpenClaw 目录要求 pnpm，但当前未发现已安装的 pnpm'
+          : 'OpenClaw 部署要求 pnpm，但当前未发现已安装的 pnpm'
       : npmAvailable
-        ? pnpmAvailable
+        ? pnpmReady
           ? 'pnpm 已安装 (推荐)'
           : 'npm 已安装'
         : '未找到 npm',
     severity: 'critical',
   });
-  if (requiresPnpm && !pnpmAvailable) {
-    warnings.push('当前 OpenClaw 目录要求 pnpm，部署时会尝试自动安装 pnpm');
+  if (requiresPnpm && !pnpmReady) {
+    warnings.push('当前 OpenClaw 目录要求 pnpm，部署时会优先尝试 Corepack、npm exec 和镜像源自动获取 pnpm');
   } else if (!npmAvailable) {
     errors.push('未找到 npm，请先安装 Node.js: https://nodejs.org');
   }

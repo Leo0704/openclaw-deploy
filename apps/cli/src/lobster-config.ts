@@ -1,6 +1,7 @@
 const fs = require('fs') as typeof import('fs');
 const os = require('os') as typeof import('os');
 const path = require('path') as typeof import('path');
+const { normalizeProjectPath } = require('./openclaw-project') as typeof import('./openclaw-project');
 
 export function getConfigPath() {
   const dir = path.join(os.homedir(), '.lobster-assistant');
@@ -10,14 +11,22 @@ export function getConfigPath() {
 
 export function loadConfig() {
   try {
-    return JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8'));
+    const config = JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8')) as Record<string, unknown>;
+    if (typeof config.installPath === 'string') {
+      config.installPath = normalizeProjectPath(config.installPath);
+    }
+    return config;
   } catch {
     return {};
   }
 }
 
 export function saveConfig(config: Record<string, unknown>) {
-  fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+  const nextConfig = { ...config };
+  if (typeof nextConfig.installPath === 'string') {
+    nextConfig.installPath = normalizeProjectPath(nextConfig.installPath);
+  }
+  fs.writeFileSync(getConfigPath(), JSON.stringify(nextConfig, null, 2));
 }
 
 export function clearOpenClawDeploymentConfig(config: Record<string, unknown>) {

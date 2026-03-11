@@ -19,6 +19,7 @@ const {
 const {
   checkDependencies,
   OPENCLAW_MIN_NODE_VERSION,
+  checkPnpmAvailable,
 } = require('./system-check') as typeof import('./system-check');
 
 const {
@@ -42,12 +43,12 @@ export function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boo
   }
 
   const packageManager = detectProjectPackageManager(projectPath);
-  if (packageManager === 'pnpm' && !checkCommand('pnpm')) {
-    return { ready: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后再启动' };
+  if (packageManager === 'pnpm' && !canBootstrapPnpm()) {
+    return { ready: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再启动' };
   }
 
   if (!fs.existsSync(path.join(projectPath, 'node_modules'))) {
-    return { ready: false, error: 'OpenClaw 依赖尚未安装，请先执行“部署 OpenClaw”或手动安装依赖' };
+    return { ready: false, error: 'OpenClaw 依赖尚未安装，请先执行”部署 OpenClaw”或手动安装依赖' };
   }
 
   return { ready: true };
@@ -57,7 +58,7 @@ export function getDependencyInstallPlan(name: 'git' | 'pnpm'): { command: strin
   if (name === 'pnpm') {
     return {
       command: 'npm install -g pnpm',
-      manual: '请先执行 `npm install -g pnpm` 后重试',
+      manual: '请先执行 `corepack pnpm --version`，或执行 `npm install -g pnpm --registry=https://registry.npmmirror.com` 后重试',
     };
   }
 
@@ -98,11 +99,17 @@ export function getDependencyInstallPlan(name: 'git' | 'pnpm'): { command: strin
   }
 }
 
+function canBootstrapPnpm(): boolean {
+  return checkPnpmAvailable() || checkCommand('corepack') || checkCommand('npm');
+}
+
 export function ensureDependencyInstalled(
   name: 'git' | 'pnpm',
   addLog: (msg: string, level?: 'info' | 'success' | 'error' | 'warning') => void
 ): { success: boolean; manual?: string } {
-  if (checkCommand(name)) {
+  // For pnpm on Windows, use more robust check
+  const isPnpmAvailable = name === 'pnpm' ? checkPnpmAvailable() : checkCommand(name);
+  if (isPnpmAvailable) {
     return { success: true };
   }
 
@@ -112,15 +119,58 @@ export function ensureDependencyInstalled(
   }
 
   addLog(`未检测到 ${name}，尝试自动安装...`, 'warning');
+  if (name === 'pnpm') {
+    if (checkCommand('corepack')) {
+      addLog('尝试通过 Corepack 获取 pnpm...', 'info');
+      const corepackResult = runCommand('corepack pnpm --version', process.cwd(), {
+        timeout: 180000,
+        ignoreError: true,
+        silent: true,
+      });
+      if (corepackResult.success) {
+        addLog('Corepack 已就绪，将通过 Corepack 提供 pnpm ✓', 'success');
+        return { success: true };
+      }
+    }
+
+    addLog('尝试通过 npm exec 临时拉起 pnpm...', 'info');
+    const npmExecResult = runCommand('npm exec --yes pnpm -- --version', process.cwd(), {
+      timeout: 300000,
+      ignoreError: true,
+      silent: true,
+    });
+    if (npmExecResult.success) {
+      addLog('已切换到 npm exec 临时提供 pnpm ✓', 'success');
+      return { success: true };
+    }
+  }
+
   if (!plan.command) {
     addLog(`${name} 无法自动安装`, 'error');
     return { success: false, manual: plan.manual };
   }
 
-  const installResult = runCommand(plan.command, process.cwd(), {
-    timeout: 900000,
-    ignoreError: true,
-  });
+  const installCommands = name === 'pnpm'
+    ? [
+        plan.command,
+        'npm install -g pnpm --registry=https://registry.npmmirror.com',
+      ]
+    : [plan.command];
+  let installResult: ReturnType<typeof runCommand> = { success: false };
+
+  for (let index = 0; index < installCommands.length; index++) {
+    const command = installCommands[index];
+    if (index > 0 && name === 'pnpm') {
+      addLog('默认源失败，尝试 npm 镜像源安装 pnpm...', 'warning');
+    }
+    installResult = runCommand(command, process.cwd(), {
+      timeout: 900000,
+      ignoreError: true,
+    });
+    if (installResult.success) {
+      break;
+    }
+  }
 
   if (name === 'git' && os.platform() === 'darwin' && plan.command === 'xcode-select --install') {
     if (checkCommand(name)) {
@@ -134,7 +184,9 @@ export function ensureDependencyInstalled(
     };
   }
 
-  if (!installResult.success || !checkCommand(name)) {
+  // For pnpm, use the more robust check after installation
+  const checkResult = name === 'pnpm' ? checkPnpmAvailable() : checkCommand(name);
+  if (!installResult.success || !checkResult) {
     addLog(`${name} 自动安装失败`, 'error');
     return { success: false, manual: plan.manual };
   }
@@ -270,8 +322,8 @@ export function handleUpdateOpenClaw(
     }
 
     const projectPackageManager = detectProjectPackageManager(config.installPath as string);
-    if (projectPackageManager === 'pnpm' && !checkCommand('pnpm')) {
-      return { success: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm 后再更新' };
+    if (projectPackageManager === 'pnpm' && !canBootstrapPnpm()) {
+      return { success: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再更新' };
     }
 
     const installPlan = getInstallCommand(config.installPath as string);

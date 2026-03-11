@@ -43,6 +43,27 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
       },
     };
 
+    function render() {
+      if (state.currentView === 'config') {
+        showConfig();
+        return;
+      }
+
+      if (state.currentView === 'deploy') {
+        if (state.deployPolling || state.deployTask) {
+          renderDeployTask(state.deployTask || { state: 'running', logs: [] });
+          return;
+        }
+      }
+
+      renderDashboard();
+    }
+
+    function goDashboard() {
+      state.currentView = 'dashboard';
+      render();
+    }
+
     function $(id) { return document.getElementById(id); }
     function escapeHtml(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -94,7 +115,7 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
         suggestions.forEach(s => { html += '<li>' + s + '</li>'; });
         html += '</ul></div>';
       }
-      html += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="render()">返回</button></div>';
+      html += '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="goDashboard()">返回</button></div>';
       card.innerHTML = html;
     }
 

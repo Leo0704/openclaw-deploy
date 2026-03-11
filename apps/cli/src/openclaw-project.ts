@@ -1,6 +1,29 @@
 const fs = require('fs') as typeof import('fs');
 const path = require('path') as typeof import('path');
 const os = require('os') as typeof import('os');
+const { checkPnpmAvailable } = require('./system-check') as typeof import('./system-check');
+const { checkCommand } = require('./process-utils') as typeof import('./process-utils');
+
+function compactWindowsPath(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/[\\/]/g, '')
+    .toLowerCase();
+}
+
+export function normalizeProjectPath(projectPath: string): string {
+  const rawPath = String(projectPath || '').trim();
+  if (!rawPath || os.platform() !== 'win32') {
+    return rawPath;
+  }
+
+  const defaultInstallPath = path.win32.join(os.homedir(), 'openclaw');
+  if (compactWindowsPath(rawPath) === compactWindowsPath(defaultInstallPath)) {
+    return defaultInstallPath;
+  }
+
+  return path.win32.normalize(rawPath);
+}
 
 export function readJsonFile(filePath: string): Record<string, unknown> | null {
   try {
@@ -11,6 +34,7 @@ export function readJsonFile(filePath: string): Record<string, unknown> | null {
 }
 
 export function detectProjectPackageManager(projectPath: string): 'pnpm' | 'npm' {
+  projectPath = normalizeProjectPath(projectPath);
   const packageJsonPath = path.join(projectPath, 'package.json');
   const packageJson = readJsonFile(packageJsonPath);
   const packageManager = String(packageJson?.packageManager || '').split('@')[0].trim();
@@ -22,7 +46,37 @@ export function detectProjectPackageManager(projectPath: string): 'pnpm' | 'npm'
   return 'npm';
 }
 
+type CommandInvocation = {
+  file: string;
+  args: string[];
+};
+
+function quoteShellArg(value: string): string {
+  if (!value) return '""';
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+function formatShellCommand(file: string, args: string[]): string {
+  return [file, ...args].map((part) => quoteShellArg(part)).join(' ');
+}
+
+export function getPnpmInvocation(): CommandInvocation {
+  if (checkPnpmAvailable()) {
+    return { file: 'pnpm', args: [] };
+  }
+
+  if (checkCommand('corepack')) {
+    return { file: 'corepack', args: ['pnpm'] };
+  }
+
+  return { file: 'npm', args: ['exec', '--yes', 'pnpm', '--'] };
+}
+
 export function isOpenClawProjectDir(projectPath: string): boolean {
+  projectPath = normalizeProjectPath(projectPath);
   if (!projectPath || !fs.existsSync(projectPath)) {
     return false;
   }
@@ -42,20 +96,41 @@ export function isOpenClawProjectDir(projectPath: string): boolean {
 }
 
 export function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; command: string } {
+  projectPath = normalizeProjectPath(projectPath);
   const pm = detectProjectPackageManager(projectPath);
-  return { pm, command: pm === 'pnpm' ? 'pnpm install' : 'npm install' };
+  if (pm === 'pnpm') {
+    const invocation = getPnpmInvocation();
+    return { pm, command: formatShellCommand(invocation.file, [...invocation.args, 'install']) };
+  }
+  return { pm, command: 'npm install' };
 }
 
 export function getBuildCommand(projectPath: string): { pm: 'pnpm' | 'npm'; command: string } {
+  projectPath = normalizeProjectPath(projectPath);
   const pm = detectProjectPackageManager(projectPath);
-  return { pm, command: pm === 'pnpm' ? 'pnpm run build' : 'npm run build' };
+  if (pm === 'pnpm') {
+    const invocation = getPnpmInvocation();
+    return { pm, command: formatShellCommand(invocation.file, [...invocation.args, 'run', 'build']) };
+  }
+  return { pm, command: 'npm run build' };
 }
 
 export function getOpenClawStartCommand(projectPath: string, port: number): string {
+  projectPath = normalizeProjectPath(projectPath);
   const pm = detectProjectPackageManager(projectPath);
-  return pm === 'pnpm'
-    ? `pnpm openclaw gateway run --port ${port} --allow-unconfigured`
-    : `npm run openclaw -- gateway run --port ${port} --allow-unconfigured`;
+  if (pm === 'pnpm') {
+    const invocation = getPnpmInvocation();
+    return formatShellCommand(invocation.file, [
+      ...invocation.args,
+      'openclaw',
+      'gateway',
+      'run',
+      '--port',
+      String(port),
+      '--allow-unconfigured',
+    ]);
+  }
+  return `npm run openclaw -- gateway run --port ${port} --allow-unconfigured`;
 }
 
 export function getOpenClawConfigPath(): string {
@@ -63,7 +138,7 @@ export function getOpenClawConfigPath(): string {
 }
 
 export function getManagedOpenClawConfigPath(config: Record<string, unknown>): string {
-  const installPath = String(config.installPath || '').trim();
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (installPath && isOpenClawProjectDir(installPath)) {
     return path.join(installPath, '.claude', 'openclaw.json');
   }
@@ -71,7 +146,7 @@ export function getManagedOpenClawConfigPath(config: Record<string, unknown>): s
 }
 
 export function getManagedOpenClawStateDir(config: Record<string, unknown>): string {
-  const installPath = String(config.installPath || '').trim();
+  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
   if (installPath && isOpenClawProjectDir(installPath)) {
     return path.join(installPath, '.claude', 'state');
   }

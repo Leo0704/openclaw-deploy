@@ -130,7 +130,7 @@ jobs:
 
           # 创建启动脚本 (Windows)
           if [ "$PLATFORM" = "win-x64" ]; then
-            cat > bundle/start.bat << 'EOF'
+            cat > bundle/start.bat << 'BATCH'
           @echo off
           chcp 65001 >nul
           setlocal
@@ -140,29 +140,27 @@ jobs:
           cd /d "%SCRIPT_DIR%openclaw"
           echo Starting OpenClaw...
           "%SCRIPT_DIR%node\node.exe" openclaw.mjs %*
-          EOF
+          BATCH
           fi
 
           # 创建启动脚本 (Unix)
           if [ "$PLATFORM" != "win-x64" ]; then
-            cat > bundle/start.sh << 'EOF'
+            cat > bundle/start.sh << 'BASHSCRIPT'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
           export PATH="$SCRIPT_DIR/node/bin:$PATH"
           cd "$SCRIPT_DIR/openclaw"
           echo "Starting OpenClaw..."
           "$SCRIPT_DIR/node/bin/node" openclaw.mjs "$@"
-          EOF
+          BASHSCRIPT
             chmod +x bundle/start.sh
           fi
 
           # 创建版本文件
-          cat > bundle/VERSION << EOF
-openclaw: ${VERSION}
-node: ${NODE_VERSION}
-platform: ${PLATFORM}
-build_date: $(date '+%Y-%m-%d %H:%M:%S')
-EOF
+          echo "openclaw: ${VERSION}" > bundle/VERSION
+          echo "node: ${NODE_VERSION}" >> bundle/VERSION
+          echo "platform: ${PLATFORM}" >> bundle/VERSION
+          echo "build_date: $(date '+%Y-%m-%d %H:%M:%S')" >> bundle/VERSION
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'

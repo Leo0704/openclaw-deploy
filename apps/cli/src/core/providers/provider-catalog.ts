@@ -2,7 +2,87 @@ const {
   ANTHROPIC_API_FORMAT,
 } = require('./provider-utils') as typeof import('./provider-utils');
 
-const PROVIDERS = {
+/**
+ * OpenClaw 格式的 Provider 定义
+ * 用于生成 models.json
+ */
+export type OpenClawModelDefinition = {
+  id: string;
+  name: string;
+  reasoning?: boolean;
+  input: Array<'text' | 'image'>;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+  contextWindow: number;
+  maxTokens: number;
+};
+
+export type OpenClawProviderConfig = {
+  baseUrl: string;
+  apiKey?: string;
+  api?: string;
+  models: OpenClawModelDefinition[];
+};
+
+const PROVIDERS: Record<string, {
+  name: string;
+  icon: string;
+  type: 'direct' | 'proxy' | 'custom';
+  apiFormat: string;
+  envKey: string;
+  baseUrl: string;
+  description?: string;
+  models: Array<{
+    id: string;
+    name: string;
+    recommended?: boolean;
+    reasoning?: boolean;
+    input?: Array<'text' | 'image'>;
+    contextWindow: number;
+    maxTokens: number;
+    cost?: {
+      input: number;
+      output: number;
+      cacheRead?: number;
+      cacheWrite?: number;
+    };
+  }>;
+}> & {
+  // OpenClaw 格式的 provider 配置（用于生成 models.json）
+  [key: string]: {
+    name: string;
+    icon: string;
+    type: 'direct' | 'proxy' | 'custom';
+    apiFormat: string;
+    envKey: string;
+    baseUrl: string;
+    description?: string;
+    models: Array<{
+      id: string;
+      name: string;
+      recommended?: boolean;
+      reasoning?: boolean;
+      input?: Array<'text' | 'image'>;
+      contextWindow: number;
+      maxTokens: number;
+      cost?: {
+        input: number;
+        output: number;
+        cacheRead?: number;
+        cacheWrite?: number;
+      };
+    }>;
+    // OpenClaw 格式的额外字段
+    api?: string;
+    injectNumCtxForOpenAICompat?: boolean;
+    headers?: Record<string, string>;
+    authHeader?: boolean;
+  };
+} = {
   anthropic: {
     name: 'Anthropic (Claude 直连)',
     icon: '🟠',
@@ -10,11 +90,12 @@ const PROVIDERS = {
     apiFormat: ANTHROPIC_API_FORMAT,
     envKey: 'ANTHROPIC_API_KEY',
     baseUrl: 'https://api.anthropic.com',
+    api: 'anthropic-messages',
     models: [
-      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', recommended: true, contextWindow: 200000, maxTokens: 16000 },
-      { id: 'claude-opus-4-1-20250805', name: 'Claude Opus 4.1', contextWindow: 200000, maxTokens: 16000 },
-      { id: 'claude-3-7-sonnet-20250219', name: 'Claude Sonnet 3.7', contextWindow: 200000, maxTokens: 8192 },
-      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000, maxTokens: 8192 },
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', recommended: true, reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 16000, cost: { input: 3, output: 15, cacheRead: 0.375, cacheWrite: 1.875 } },
+      { id: 'claude-opus-4-1-20250805', name: 'Claude Opus 4.1', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 16000, cost: { input: 15, output: 75 } },
+      { id: 'claude-3-7-sonnet-20250219', name: 'Claude Sonnet 3.7', reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192, cost: { input: 3, output: 15 } },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', input: ['text', 'image'], contextWindow: 200000, maxTokens: 8192, cost: { input: 0.8, output: 4 } },
     ]
   },
   openai: {

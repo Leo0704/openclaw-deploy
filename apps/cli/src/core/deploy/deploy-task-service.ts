@@ -219,9 +219,21 @@ async function writeOpenClawNativeConfig(
       return;
     }
 
+    // 处理 custom provider 的特殊情况
+    let finalModel = model;
+    let baseUrl = String(config.baseUrl || '');
+
+    // 如果是 custom provider，使用 customModelId 作为模型 ID
+    if (provider === 'custom') {
+      const customModelId = String(config.customModelId || '').trim();
+      if (customModelId) {
+        finalModel = customModelId;
+      }
+    }
+
     // 生成 models.json 配置
-    const modelsConfig = buildOpenClawModelsJson(provider, model, apiKey);
-    deps.addLog(`生成模型配置: ${provider}/${model}`, 'info');
+    const modelsConfig = buildOpenClawModelsJson(provider, finalModel, apiKey, baseUrl);
+    deps.addLog(`生成模型配置: ${provider}/${finalModel}`, 'info');
 
     // 生成 agents 配置
     const agentsConfig = buildOpenClawAgentsConfig(provider, model);

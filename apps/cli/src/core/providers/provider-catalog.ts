@@ -258,12 +258,14 @@ const PROVIDERS: Record<string, {
  * @param providerKey provider 标识符 (如 'anthropic', 'openai', 'custom')
  * @param model 模型 ID
  * @param apiKey API Key
+ * @param customBaseUrl 自定义 API 地址（用于 custom provider）
  * @returns OpenClaw 格式的 models 配置对象
  */
 export function buildOpenClawModelsJson(
   providerKey: string,
   model: string,
-  apiKey: string
+  apiKey: string,
+  customBaseUrl?: string
 ): Record<string, unknown> {
   const provider = PROVIDERS[providerKey];
   if (!provider) {
@@ -282,8 +284,10 @@ export function buildOpenClawModelsJson(
   }));
 
   // 构建 provider 配置
+  // custom provider 使用用户提供的 baseUrl
+  const providerBaseUrl = providerKey === 'custom' && customBaseUrl ? customBaseUrl : provider.baseUrl;
   const providerConfig: Record<string, unknown> = {
-    baseUrl: provider.baseUrl,
+    baseUrl: providerBaseUrl,
     api: provider.api || provider.apiFormat,
   };
 

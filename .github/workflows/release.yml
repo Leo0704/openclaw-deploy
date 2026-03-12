@@ -136,3 +136,11 @@ jobs:
             release-assets/lobster-macos-x64 \
             release-assets/lobster-linux-x64 \
             release-assets/lobster-win-x64.exe
+
+  build-openclaw-bundle:
+    name: Build OpenClaw Bundle
+    needs: release
+    uses: ./.github/workflows/build-bundle.yml
+    with:
+      version: '2026.3.8'
+      node_version: '22.14.0'

@@ -214,13 +214,14 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ github.event.inputs.version || '2026.3.8' }}
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VERSION: ${{ github.event.inputs.version || inputs.version || '2026.3.8' }}
         run: |
-          TAG="bundle-v${VERSION}"
+          TAG="openclaw-v${VERSION}"
 
+          gh release view "${TAG}" --repo Leo0704/lobster-releases >/dev/null 2>&1 || \
           gh release create "${TAG}" \
-            --repo "${{ github.repository }}" \
+            --repo Leo0704/lobster-releases \
             --title "OpenClaw ${VERSION} 离线包" \
             --notes "## OpenClaw ${VERSION} 离线安装包
 
@@ -245,6 +246,9 @@ jobs:
           ## 龙虾助手用户
 
           下载后放到**下载目录**，然后在龙虾助手中点击部署即可。
-          " \
-            artifacts/* || \
-          gh release upload "${TAG}" artifacts/* --clobber
+          "
+
+          gh release upload "${TAG}" \
+            --repo Leo0704/lobster-releases \
+            --clobber \
+            artifacts/*

@@ -226,25 +226,25 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       const installPath = $('path').value;
       const gatewayPort = parseInt($('port').value);
       const apiKey = $('apiKey').value;
-      const isCustom = state.selectedProvider === 'custom';
+      const baseUrl = $('baseUrl')?.value || state.config.baseUrl || '';
+      const model = $('customModelId')?.value || state.config.customModelId || state.config.model || '';
 
       if (!apiKey) return toast('请输入 API Key', 'error');
-      if (!isCustom && !state.selectedModel) return toast('请选择模型', 'error');
+      if (!baseUrl) return toast('请输入 Base URL', 'error');
+      if (!model) return toast('请输入 Model ID', 'error');
 
       const payload = {
         installPath,
         gatewayPort,
         apiKey,
-        provider: state.selectedProvider,
-        model: isCustom ? (($('deployCustomModelId')?.value || '').trim()) : state.selectedModel,
+        provider: 'custom',
+        model,
+        baseUrl,
+        apiFormat: resolveApiFormatFromCompatibilityClient($('deployApiFormat')?.value || state.config.apiFormat || 'openai'),
+        customModelId: model,
+        customEndpointId: $('customEndpointId')?.value || state.config.customEndpointId || '',
+        customModelAlias: $('customModelAlias')?.value || state.config.customModelAlias || '',
       };
-
-      if (isCustom) {
-        if (!payload.model) return toast('请输入 Model ID', 'error');
-        payload.baseUrl = $('deployBaseUrl')?.value || '';
-        payload.apiFormat = resolveApiFormatFromCompatibilityClient($('deployApiFormat')?.value || 'openai');
-        payload.customModelId = payload.model;
-      }
 
       $('main-card').innerHTML = \`
         <h2 class="card-title">🩺 部署前检查</h2>

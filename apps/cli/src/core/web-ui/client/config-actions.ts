@@ -97,44 +97,36 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
       state.currentView = 'config';
       const card = $('main-card');
       const c = state.config;
-      const currentProvider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
-      const isCustom = state.selectedProvider === 'custom';
 
       card.innerHTML = \`
         <h2 class="card-title">⚙️ API 配置</h2>
         <div class="hero-panel">
           <div class="hero-kicker">Configuration</div>
-          <div class="hero-title">\${isCustom ? '按顺序完成自定义模型接入' : '快速完成常用模型配置'}</div>
-          <div class="hero-copy">\${isCustom ? '请先填地址和密钥，再确认接口类型、模型名称并完成连接验证。验证通过后再保存。' : '下拉框里展示的是当前常用模型示例。具体可用模型以你所使用的平台官方文档和控制台为准。'}</div>
+          <div class="hero-title">配置模型服务</div>
+          <div class="hero-copy">填写 API 地址、密钥和模型名称，验证通过后保存即可。</div>
         </div>
         <div class="wizard-steps">
           <div class="wizard-step">
-            <div class="wizard-step-title">第 1 步：选择 Provider</div>
-            <div class="wizard-step-desc">先选择你要接入的模型服务。常见服务会提供常用模型示例，自定义服务需要手动验证连接。</div>
-            <select id="configProvider" class="form-select" onchange="selectProvider(this.value)">
-              \${renderProviderOptions()}
-            </select>
-          </div>
-
-          <div class="wizard-step">
-            <div class="wizard-step-title">第 2 步：提供凭证</div>
-            <div class="wizard-step-desc">\${isCustom ? '自定义服务先填地址和密钥。' : '常见服务只需要这三个关键输入：服务、模型、API Key。'}</div>
-            <div class="form-group">
-              <label class="form-label">API Key</label>
-              <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key" \${isCustom ? 'oninput="resetCustomWizard()"' : ''}>
-            </div>
-            \${isCustom || currentProvider.type === 'proxy' ? \`
+            <div class="wizard-step-title">第 1 步：API 地址</div>
+            <div class="wizard-step-desc">填写服务商的 API Base URL。</div>
             <div class="form-group">
               <label class="form-label">Base URL</label>
-              <input type="text" id="baseUrl" class="form-input" value="\${c.baseUrl || currentProvider.baseUrl || ''}" placeholder="例如: https://api.example.com/v1" \${isCustom ? 'oninput="syncCustomEndpointId(); resetCustomWizard()"' : ''}>
+              <input type="text" id="baseUrl" class="form-input" value="\${c.baseUrl || ''}" placeholder="例如: https://api.anthropic.com 或 https://api.openai.com/v1" oninput="syncCustomEndpointId(); resetCustomWizard()">
             </div>
-            \` : ''}
           </div>
 
-          \${isCustom ? \`
           <div class="wizard-step">
-            <div class="wizard-step-title">第 3 步：验证自定义连接</div>
-            <div class="wizard-step-desc">依次确认接口类型、模型名称，验证通过后再保存连接名称和模型别名。</div>
+            <div class="wizard-step-title">第 2 步：API Key</div>
+            <div class="wizard-step-desc">填写你的 API 密钥。</div>
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key" oninput="resetCustomWizard()">
+            </div>
+          </div>
+
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 3 步：接口类型</div>
+            <div class="wizard-step-desc">选择 API 接口类型，不确定可以选"自动探测"。</div>
             <div class="form-group">
               <label class="form-label">接口类型</label>
               <select id="apiFormat" class="form-select" onchange="resetCustomWizard()">
@@ -143,34 +135,31 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
                 <option value="unknown" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'unknown' ? 'selected' : ''}>Unknown (自动探测)</option>
               </select>
             </div>
+          </div>
+
+          <div class="wizard-step">
+            <div class="wizard-step-title">第 4 步：模型配置</div>
+            <div class="wizard-step-desc">填写模型 ID 和可选配置。</div>
             <div class="form-group">
               <label class="form-label">Model ID</label>
-              <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || state.selectedModel || ''}" placeholder="例如: glm-5, claude-sonnet-4" oninput="resetCustomWizard()">
+              <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || c.model || ''}" placeholder="例如: claude-sonnet-4-20250514, gpt-4.1, glm-5" oninput="resetCustomWizard()">
             </div>
             <div class="form-group">
               <label class="form-label">Endpoint ID</label>
-              <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || 'custom'}" placeholder="例如: custom-open-bigmodel-cn">
+              <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrlClient(c.baseUrl || '')}" placeholder="例如: anthropic, openai, custom-api-example-com">
+              <div class="form-hint">用于在 OpenClaw 配置中标识这个 endpoint</div>
             </div>
             <div class="form-group">
               <label class="form-label">模型别名（可选）</label>
-              <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: glm">
+              <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: claude, gpt, glm">
             </div>
             <div id="custom-wizard-result" style="margin-top:12px">
               \${state.customWizard.message ? \`<div class="note" style="background:\${state.customWizard.verified ? '#D1FAE5' : '#FEF2F2'};color:\${state.customWizard.verified ? '#065F46' : '#991B1B'}">\${state.customWizard.message}</div>\` : ''}
             </div>
           </div>
-          \` : \`
-          <div class="wizard-step">
-            <div class="wizard-step-title">第 3 步：选择 Model</div>
-            <div class="wizard-step-desc">选择你实际要使用的模型即可。</div>
-            <select id="presetModel" class="form-select" onchange="selectModel(this.value)">
-              \${renderModelOptions(state.selectedProvider, state.selectedModel)}
-            </select>
-          </div>
-          \`}
 
           <div class="wizard-step">
-            <div class="wizard-step-title">第 4 步：本地网关参数</div>
+            <div class="wizard-step-title">第 5 步：本地网关参数</div>
             <div class="form-group">
               <label class="form-label">服务端口号</label>
               <input type="number" id="gport" class="form-input" value="\${c.gatewayPort || ${DEFAULT_GATEWAY_PORT}}">
@@ -180,7 +169,7 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
 
         <div class="actions">
           <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
-          <button class="btn btn-secondary" onclick="testConnection()">\${isCustom ? '验证 Endpoint' : '测试连接'}</button>
+          <button class="btn btn-secondary" onclick="testConnection()">验证连接</button>
           <button class="btn btn-secondary" onclick="goDashboard()">取消</button>
         </div>
 
@@ -193,10 +182,9 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
       resultEl.style.display = 'block';
       resultEl.innerHTML = '<div style="text-align:center;padding:20px;color:#6B7280">🔄 正在测试连接...</div>';
 
-      const isCustom = state.selectedProvider === 'custom';
       const requestedCompatibility = $('apiFormat')?.value || 'openai';
       const baseUrl = $('baseUrl')?.value;
-      const model = $('customModelId')?.value || state.selectedModel;
+      const model = $('customModelId')?.value;
       const endpointIdInput = $('customEndpointId');
       const suggestedEndpointId = buildEndpointIdFromUrlClient(baseUrl);
 
@@ -204,8 +192,21 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
         endpointIdInput.value = suggestedEndpointId;
       }
 
+      if (!baseUrl) {
+        resultEl.innerHTML = \`<div class="note" style="background:#FEE2E2;color:#991B1B">❌ 请填写 Base URL</div>\`;
+        return;
+      }
+      if (!$('apiKey')?.value) {
+        resultEl.innerHTML = \`<div class="note" style="background:#FEE2E2;color:#991B1B">❌ 请填写 API Key</div>\`;
+        return;
+      }
+      if (!model) {
+        resultEl.innerHTML = \`<div class="note" style="background:#FEE2E2;color:#991B1B">❌ 请填写 Model ID</div>\`;
+        return;
+      }
+
       const attempt = async (apiFormatValue) => api('test-connection', {
-        provider: state.selectedProvider,
+        provider: 'custom',
         apiKey: $('apiKey')?.value,
         baseUrl,
         model,
@@ -215,7 +216,7 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
       let res;
       let resolvedCompatibility = requestedCompatibility;
 
-      if (isCustom && requestedCompatibility === 'unknown') {
+      if (requestedCompatibility === 'unknown') {
         const openaiRes = await attempt('openai-completions');
         if (openaiRes.success) {
           res = openaiRes;
@@ -232,29 +233,23 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
       }
 
       if (res.success) {
-        if (isCustom) {
-          state.customWizard.verified = true;
-          state.customWizard.retryMode = '';
-          state.customWizard.message = '验证成功。当前地址、接口类型和模型名称可以正常使用，保存后会直接按这组配置启动。';
-          state.customWizard.suggestedEndpointId = suggestedEndpointId;
-          if ($('apiFormat')) $('apiFormat').value = resolvedCompatibility;
-        }
+        state.customWizard.verified = true;
+        state.customWizard.retryMode = '';
+        state.customWizard.message = '验证成功。当前配置可以正常使用，保存后会按这组配置启动。';
+        state.customWizard.suggestedEndpointId = suggestedEndpointId;
+        if ($('apiFormat')) $('apiFormat').value = resolvedCompatibility;
         resultEl.innerHTML = \`<div class="note" style="background:#D1FAE5;color:#065F46">✅ 连接成功！模型响应正常</div>\`;
       } else {
-        if (isCustom) {
-          state.customWizard.verified = false;
-          state.customWizard.retryMode = 'baseUrl';
-          state.customWizard.message = '验证失败：' + (res.error || '未知错误');
-        }
+        state.customWizard.verified = false;
+        state.customWizard.retryMode = 'baseUrl';
+        state.customWizard.message = '验证失败：' + (res.error || '未知错误');
         resultEl.innerHTML = \`
           <div class="note" style="background:#FEE2E2;color:#991B1B">❌ 连接失败：\${res.error || '未知错误'}</div>
-          \${isCustom ? \`
-            <div class="actions" style="margin-top:12px">
-              <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('baseUrl')">修改 Base URL</button>
-              <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('model')">修改 Model ID</button>
-              <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('both')">同时修改两者</button>
-            </div>
-          \` : ''}
+          <div class="actions" style="margin-top:12px">
+            <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('baseUrl')">修改 Base URL</button>
+            <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('model')">修改 Model ID</button>
+            <button class="btn btn-secondary btn-small" onclick="chooseCustomRetry('both')">同时修改两者</button>
+          </div>
         \`;
       }
     }
@@ -264,30 +259,21 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
     }
 
     async function saveConfig() {
-      const provider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
-      const isCustom = state.selectedProvider === 'custom';
-      const selectedPresetModel = $('presetModel')?.value || state.selectedModel;
+      if (!state.customWizard.verified) {
+        return toast('请先完成连接验证，再保存配置', 'error');
+      }
 
       const configData = {
         apiKey: $('apiKey')?.value || '',
+        baseUrl: $('baseUrl')?.value || '',
         gatewayPort: parseInt($('gport')?.value || String(DEFAULT_GATEWAY_PORT)),
-        provider: state.selectedProvider,
-        model: isCustom ? ($('customModelId')?.value || state.selectedModel) : selectedPresetModel,
+        provider: 'custom',
+        model: $('customModelId')?.value || '',
+        apiFormat: resolveApiFormatFromCompatibilityClient($('apiFormat')?.value || 'openai'),
+        customModelId: $('customModelId')?.value || '',
+        customEndpointId: $('customEndpointId')?.value || buildEndpointIdFromUrlClient($('baseUrl')?.value || ''),
+        customModelAlias: $('customModelAlias')?.value || '',
       };
-
-      if (isCustom || provider.type === 'proxy') {
-        configData.baseUrl = $('baseUrl')?.value || provider.baseUrl || '';
-      }
-
-      if (isCustom) {
-        if (!state.customWizard.verified) {
-          return toast('请先完成 Endpoint 验证，再保存自定义模型配置', 'error');
-        }
-        configData.apiFormat = resolveApiFormatFromCompatibilityClient($('apiFormat')?.value || 'openai');
-        configData.customModelId = $('customModelId')?.value || state.selectedModel;
-        configData.customEndpointId = $('customEndpointId')?.value || buildEndpointIdFromUrlClient($('baseUrl')?.value || '');
-        configData.customModelAlias = $('customModelAlias')?.value || '';
-      }
 
       const res = await api('config', configData);
       if (res.success) { state.config = res.config; toast('配置已保存！'); goDashboard(); }

@@ -260,7 +260,6 @@ const PROVIDERS: Record<string, {
  * @param apiKey API Key
  * @param customBaseUrl 自定义 API 地址（用于 custom provider）
  * @param apiFormat API 格式
- * @param customEndpointId 自定义 endpoint ID
  * @returns OpenClaw 格式的 models 配置对象
  */
 export function buildOpenClawModelsJson(
@@ -268,8 +267,7 @@ export function buildOpenClawModelsJson(
   model: string,
   apiKey: string,
   customBaseUrl?: string,
-  apiFormat?: string,
-  customEndpointId?: string
+  apiFormat?: string
 ): Record<string, unknown> {
   const provider = PROVIDERS[providerKey];
   if (!provider) {
@@ -292,14 +290,9 @@ export function buildOpenClawModelsJson(
   const providerBaseUrl = providerKey === 'custom' && customBaseUrl ? customBaseUrl : provider.baseUrl;
   const providerConfig: Record<string, unknown> = {
     baseUrl: providerBaseUrl,
-    // 如果指定了 apiFormat 或 customEndpointId，使用它们
+    // 如果指定了 apiFormat，使用它
     api: (apiFormat && apiFormat !== 'openai-completions') ? apiFormat : (provider.api || provider.apiFormat),
   };
-
-  // 添加 customEndpointId
-  if (customEndpointId && providerKey === 'custom') {
-    providerConfig.endpointId = customEndpointId;
-  }
 
   // 添加 API Key（写入环境变量引用）
   if (apiKey) {

@@ -231,13 +231,12 @@ async function writeOpenClawNativeConfig(
       }
     }
 
-    // 获取 API 格式和自定义配置
+    // 获取 API 格式
     const apiFormat = String(config.apiFormat || '');
-    const customEndpointId = String(config.customEndpointId || '');
     const customModelAlias = String(config.customModelAlias || '');
 
     // 生成 models.json 配置
-    const modelsConfig = buildOpenClawModelsJson(provider, finalModel, apiKey, baseUrl, apiFormat, customEndpointId);
+    const modelsConfig = buildOpenClawModelsJson(provider, finalModel, apiKey, baseUrl, apiFormat);
     deps.addLog(`生成模型配置: ${provider}/${finalModel}`, 'info');
 
     // 生成 agents 配置（包含自定义模型别名）

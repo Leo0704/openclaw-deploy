@@ -149,19 +149,19 @@ jobs:
           NODE_VERSION: ${{ steps.version.outputs.node_version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
+          # 创建 bundle 目录
+          New-Item -ItemType Directory -Path bundle -Force | Out-Null
+          New-Item -ItemType Directory -Path bundle/node -Force | Out-Null
+          New-Item -ItemType Directory -Path bundle/openclaw -Force | Out-Null
+
           # 复制 OpenClaw（排除 .git 目录）
-          Get-ChildItem -Path openclaw -Recurse -File | Where-Object { $_.FullName -notmatch '\.git' } | ForEach-Object {
-            $dest = $_.FullName -replace '^openclaw', 'bundle/openclaw'
-            $destDir = Split-Path $dest -Parent
-            if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-            Copy-Item $_.FullName -Destination $dest -Force
-          }
+          robocopy openclaw bundle/openclaw /E /XD .git /NJH /NJS /NC /NS /NP
 
           # 复制 node 目录
-          Copy-Item -Path node -Destination bundle/node -Recurse -Force
+          robocopy node bundle/node /E /NJH /NJS /NC /NS /NP
 
           # 创建启动脚本
-          @"
+          $batContent = @"
           @echo off
           chcp 65001 >nul
           setlocal
@@ -171,7 +171,8 @@ jobs:
           cd /d "%SCRIPT_DIR%openclaw"
           echo Starting OpenClaw...
           "%SCRIPT_DIR%node\node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
-          "@ | Out-File -FilePath bundle/start.bat -Encoding utf8
+          "@
+          $batContent | Out-File -FilePath bundle/start.bat -Encoding utf8
 
           # 创建版本文件
           "openclaw: ${VERSION}" | Out-File -FilePath bundle/VERSION -Encoding utf8

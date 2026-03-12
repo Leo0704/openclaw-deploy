@@ -62,11 +62,8 @@ export function renderWebUiClientRuntime(config: Record<string, unknown>, status
       }
     }
 
-    async function updateOpenClaw() {
-      toast('检查更新中...');
-      const res = await api('update-openclaw');
-      if (res.success) toast(res.message || '更新成功！');
-      else toast(res.error || '更新失败', 'error');
+    function updateOpenClaw() {
+      toast('OpenClaw 更新请联系售后服务获取最新版本', 'warning');
     }
 
     // ============================================

@@ -21,9 +21,12 @@ const {
   getOpenClawStartCommand,
   isOpenClawProjectDir,
   mergeOpenClawConfigSections,
-  normalizeProjectPath,
   readManagedOpenClawConfig,
 } = require('../openclaw/openclaw-project') as typeof import('../openclaw/openclaw-project');
+
+const {
+  normalizePath,
+} = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
 const {
   buildCustomProviderConfig,
   buildEndpointIdFromUrl,

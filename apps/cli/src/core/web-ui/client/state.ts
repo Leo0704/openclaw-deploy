@@ -72,6 +72,9 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
 
     function goDashboard() {
       state.currentView = 'dashboard';
+      state.deployTask = null;
+      state.deployPolling = false;
+      state.pendingDeployPayload = null;
       render();
     }
 

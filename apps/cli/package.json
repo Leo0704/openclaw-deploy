@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "clean": "rm -rf dist bin",
     "pkg": "pkg . --targets node22-macos-arm64,node22-linux-x64,node22-win-x64 --output-path bin",
-    "pkg:mac-app": "npm run build && rm -rf bin && mkdir -p bin && npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64 && ../../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip $(node -p \"require('./package.json').version\")"
+    "pkg:mac-app": "npm run build && rm -rf bin && mkdir -p bin && npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64 && ../../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip $(node -p \"require('./package.json').version\")",
+    "validate:release-version": "node -e \"const pkg = require('./package.json'); const tag = process.argv[1] || ''; const version = tag.replace(/^v/, ''); if (pkg.version !== version) { console.error('Version mismatch: package.json=' + pkg.version + ', tag=' + tag); process.exit(1); } console.log('Version validated:', pkg.version);\" --"
   },
   "pkg": {
     "scripts": "dist/**/*.js",

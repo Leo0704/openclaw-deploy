@@ -68,7 +68,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
             <div class="hero-copy">先选模型接入方式，再完成本地部署。常见服务可以快速配置，自定义接入则需要先完成连接验证。</div>
           </div>
 
-          <div class="note note-info">部署前会先跑一次性环境预检，缺依赖、端口冲突、安装路径异常会在开始前集中给出。</div>
+          <div class="note note-info">部署前会先跑一次性环境预检，网络、端口冲突、安装路径异常会在开始前集中给出。</div>
 
           <div class="wizard-steps">
             <div class="wizard-step">
@@ -223,9 +223,9 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
             <div class="update-item">
               <div class="update-info">
                 <h4>OpenClaw</h4>
-                <p>更新 AI 网关服务到最新版本</p>
+                <p>如需更新 OpenClaw，请联系售后服务获取最新版本</p>
               </div>
-              <button class="btn btn-secondary btn-small" onclick="updateOpenClaw()">检查更新</button>
+              <span style="color:#6B7280;font-size:13px">请联系售后服务</span>
             </div>
             <div class="update-item">
               <div class="update-info">
@@ -233,17 +233,24 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
                 <p>当前版本: v\${state.update.currentVersion}</p>
               </div>
               <div class="update-actions">
-                \${state.update.mode === 'up_to_date' ? \`
-                  <span style="color:#10B981;font-size:13px">✓ 已是最新版本</span>
-                \` : state.update.mode === 'available' || state.update.mode === 'recommended' ? \`
-                  <span style="color:#F59E0B;font-size:13px">发现新版本 v\${state.update.latestVersion}</span>
-                  <button class="btn btn-secondary btn-small" onclick="checkLobsterUpdate()">检查更新</button>
-                \` : state.update.mode === 'required' ? \`
-                  <span style="color:#EF4444;font-size:13px">⚠️ 必须更新</span>
-                  <button class="btn btn-primary btn-small" onclick="performLobsterSelfUpdate()">立即更新</button>
-                \` : \`
-                  <button class="btn btn-secondary btn-small" onclick="checkLobsterUpdate()">检查更新</button>
-                \`}
+                \${(function() {
+                  const isMac = navigator.platform.toLowerCase().includes('mac');
+                  if (isMac) {
+                    return \`<span style="color:#6B7280;font-size:13px">macOS 版需手动更新</span>\`;
+                  }
+                  if (state.update.mode === 'up_to_date') {
+                    return \`<span style="color:#10B981;font-size:13px">✓ 已是最新版本</span>\`;
+                  }
+                  if (state.update.mode === 'available' || state.update.mode === 'recommended') {
+                    return \`<span style="color:#F59E0B;font-size:13px">发现新版本 v\${state.update.latestVersion}</span>
+                      <button class="btn btn-secondary btn-small" onclick="checkLobsterUpdate()">检查更新</button>\`;
+                  }
+                  if (state.update.mode === 'required') {
+                    return \`<span style="color:#EF4444;font-size:13px">⚠️ 必须更新</span>
+                      <button class="btn btn-primary btn-small" onclick="performLobsterSelfUpdate()">立即更新</button>\`;
+                  }
+                  return \`<button class="btn btn-secondary btn-small" onclick="checkLobsterUpdate()">检查更新</button>\`;
+                })()}
               </div>
             </div>
             \${state.update.lastCheckedAt ? \`

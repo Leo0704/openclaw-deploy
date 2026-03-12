@@ -2,7 +2,7 @@
  * OpenClaw 项目工具
  *
  * 注：路径和存储相关函数已迁移到平台模块：
- * - normalizeProjectPath, isOpenClawProjectDir, readJsonFile -> @/platform/path/platform-paths
+ * - normalizePath, isOpenClawProjectDir, readJsonFile -> @/platform/path/platform-paths
  * - getOpenClawConfigPath, getManagedOpenClawConfigPath, getManagedOpenClawStateDir, getManagedOpenClawSkillsDir -> @/platform/storage/storage-paths
  */
 
@@ -11,7 +11,7 @@ import * as path from 'path';
 import { checkPnpmAvailable } from '../../core/diagnostics/system-check';
 import { checkCommand } from '../../shared/process/process-utils';
 import {
-  normalizeProjectPath,
+  normalizePath,
   readJsonFile,
   isOpenClawProjectDir,
   getOpenClawProjectPath,
@@ -24,7 +24,7 @@ import {
 } from '../../platform/storage/storage-paths';
 
 export function detectProjectPackageManager(projectPath: string): 'pnpm' | 'npm' {
-  projectPath = normalizeProjectPath(projectPath);
+  projectPath = normalizePath(projectPath);
   const packageJsonPath = path.join(projectPath, 'package.json');
   const packageJson = readJsonFile(packageJsonPath);
   const packageManager = String(packageJson?.packageManager || '').split('@')[0].trim();
@@ -67,7 +67,7 @@ export function getPnpmInvocation(): CommandInvocation {
 
 
 export function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; command: string } {
-  projectPath = normalizeProjectPath(projectPath);
+  projectPath = normalizePath(projectPath);
   const pm = detectProjectPackageManager(projectPath);
   if (pm === 'pnpm') {
     const invocation = getPnpmInvocation();
@@ -77,7 +77,7 @@ export function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; co
 }
 
 export function getOpenClawStartCommand(projectPath: string, port: number, bundledNodePath?: string): string {
-  projectPath = normalizeProjectPath(projectPath);
+  projectPath = normalizePath(projectPath);
 
   // 确定使用的 Node.js 路径
   const nodePath = bundledNodePath || 'node';
@@ -122,7 +122,7 @@ import {
 } from '../../platform/storage/storage-paths';
 
 export {
-  normalizeProjectPath,
+  normalizePath,
   readJsonFile,
   isOpenClawProjectDir,
   getOpenClawConfigPath,

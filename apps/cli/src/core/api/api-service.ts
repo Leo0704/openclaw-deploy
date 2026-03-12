@@ -40,7 +40,7 @@ export function createApiHandlers(deps: ApiHandlerDeps) {
           return await deps.performHealthChecks({
             installPath: String(data.installPath || ''),
             gatewayPort: Number(data.gatewayPort) || 18789,
-          }, { offlineBundleMode: true });
+          });
 
         case 'start':
           return deps.handleStart(config, deps.getGatewayLifecycleDeps());

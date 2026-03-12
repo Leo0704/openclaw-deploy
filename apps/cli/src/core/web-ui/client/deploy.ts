@@ -222,28 +222,56 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
     }
 
     async function deploy() {
+      // 清除旧的部署状态
       state.currentView = 'deploy';
+      state.deployTask = null;
+      state.deployPolling = false;
+      state.pendingDeployPayload = null;
+
       const installPath = $('path').value;
       const gatewayPort = parseInt($('port').value);
-      const apiKey = $('apiKey').value;
-      const baseUrl = $('baseUrl')?.value || state.config.baseUrl || '';
-      const model = $('customModelId')?.value || state.config.customModelId || state.config.model || '';
+      const apiKey = $('apiKey')?.value || state.config.apiKey || '';
+      const isCustom = state.selectedProvider === 'custom';
 
       if (!apiKey) return toast('请输入 API Key', 'error');
-      if (!baseUrl) return toast('请输入 Base URL', 'error');
-      if (!model) return toast('请输入 Model ID', 'error');
+
+      const provider = state.selectedProvider;
+      const providerConfig = PROVIDERS[provider];
+
+      let model;
+      let baseUrl = '';
+      let apiFormat = '';
+      let customModelId = '';
+      let customEndpointId = '';
+      let customModelAlias = '';
+
+      if (isCustom) {
+        baseUrl = $('deployBaseUrl')?.value || state.config.baseUrl || '';
+        model = $('deployCustomModelId')?.value || state.config.customModelId || state.config.model || '';
+        apiFormat = resolveApiFormatFromCompatibilityClient($('deployApiFormat')?.value || state.config.apiFormat || 'openai');
+        customModelId = model;
+        customEndpointId = $('customEndpointId')?.value || state.config.customEndpointId || '';
+        customModelAlias = $('customModelAlias')?.value || state.config.customModelAlias || '';
+
+        if (!baseUrl) return toast('请输入 Base URL', 'error');
+        if (!model) return toast('请输入 Model ID', 'error');
+      } else {
+        // 预设 provider：使用配置中的 model
+        model = state.selectedModel || state.config.model;
+        if (!model) return toast('请选择模型', 'error');
+      }
 
       const payload = {
         installPath,
         gatewayPort,
         apiKey,
-        provider: 'custom',
+        provider,
         model,
         baseUrl,
-        apiFormat: resolveApiFormatFromCompatibilityClient($('deployApiFormat')?.value || state.config.apiFormat || 'openai'),
-        customModelId: model,
-        customEndpointId: $('customEndpointId')?.value || state.config.customEndpointId || '',
-        customModelAlias: $('customModelAlias')?.value || state.config.customModelAlias || '',
+        apiFormat,
+        customModelId,
+        customEndpointId,
+        customModelAlias,
       };
 
       $('main-card').innerHTML = \`
@@ -275,13 +303,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       const checkLines = (health.checks || []).map(check => {
         const level = check.passed ? 'success' : (check.severity === 'warning' ? 'warning' : 'error');
         const icon = check.passed ? '✓' : (check.severity === 'warning' ? '!' : '✗');
-        let message = check.message;
-        // 为特定检查项添加自动修复提示
-        if (!check.passed && check.name === '包管理器') {
-          message += ' （系统将自动尝试通过 corepack/npm exec 安装）';
-        } else if (!check.passed && check.name === 'Git') {
-          message += ' （仅影响在线更新，不影响部署）';
-        }
+        const message = check.message;
         return '<div class="log-line log-' + level + '">[' + check.name + '] ' + icon + ' ' + message + '</div>';
       }).join('');
       precheckLogsEl.innerHTML = checkLines || '<div class="log-line log-info">未返回检查结果</div>';
@@ -304,8 +326,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
         if (recoveryCards) {
           $('main-card').insertAdjacentHTML('beforeend', recoveryCards);
         }
-        $('main-card').insertAdjacentHTML('beforeend', '<div class="log-line log-info" style="margin-top:16px">💡 点击继续后，系统将自动尝试安装缺失依赖（pnpm/corepack/npm exec）。</div>');
-        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署（自动修复）</button><button class="btn btn-secondary" onclick="goDashboard()">稍后再说</button></div>');
+        $('main-card').insertAdjacentHTML('beforeend', '<div class="actions" style="margin-top:20px"><button class="btn btn-primary" onclick="continueDeploy()">继续部署</button><button class="btn btn-secondary" onclick="goDashboard()">稍后再说</button></div>');
         state.pendingDeployPayload = payload;
         return;
       }

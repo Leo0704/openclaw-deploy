@@ -124,7 +124,7 @@ jobs:
         run: |
           # 复制 OpenClaw（排除 .git 目录以减小体积）
           mkdir -p bundle/openclaw
-          if [ "$RUNNER_OS" = "Windows" ]; then
+          if [ "${{ runner.os }}" = "Windows" ]; then
             # Windows: 使用 robocopy
             robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS || true
           else

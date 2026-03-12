@@ -1,7 +1,7 @@
 const fs = require('fs') as typeof import('fs');
 const os = require('os') as typeof import('os');
 const path = require('path') as typeof import('path');
-const { normalizeProjectPath } = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
+const { normalizePath } = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
 
 export function getConfigPath() {
   const dir = path.join(os.homedir(), '.lobster-assistant');
@@ -13,7 +13,7 @@ export function loadConfig() {
   try {
     const config = JSON.parse(fs.readFileSync(getConfigPath(), 'utf-8')) as Record<string, unknown>;
     if (typeof config.installPath === 'string') {
-      config.installPath = normalizeProjectPath(config.installPath);
+      config.installPath = normalizePath(config.installPath);
     }
     return config;
   } catch {
@@ -24,7 +24,7 @@ export function loadConfig() {
 export function saveConfig(config: Record<string, unknown>) {
   const nextConfig = { ...config };
   if (typeof nextConfig.installPath === 'string') {
-    nextConfig.installPath = normalizeProjectPath(nextConfig.installPath);
+    nextConfig.installPath = normalizePath(nextConfig.installPath);
   }
   fs.writeFileSync(getConfigPath(), JSON.stringify(nextConfig, null, 2));
 }

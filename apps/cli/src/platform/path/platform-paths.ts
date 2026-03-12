@@ -50,24 +50,10 @@ export function normalizePath(projectPath: string): string {
 }
 
 /**
- * 路径归一化（原始实现，不依赖平台适配器）
- *
- * Windows 特殊处理：
- * - 如果路径与默认安装路径匹配（忽略大小写和斜杠），返回默认路径
- * - 否则使用 path.win32.normalize
+ * @deprecated 请使用 normalizePath
  */
 export function normalizeProjectPath(projectPath: string): string {
-  const rawPath = String(projectPath || '').trim();
-  if (!rawPath || os.platform() !== 'win32') {
-    return rawPath;
-  }
-
-  const defaultInstallPath = path.win32.join(os.homedir(), 'openclaw');
-  if (compactWindowsPath(rawPath) === compactWindowsPath(defaultInstallPath)) {
-    return defaultInstallPath;
-  }
-
-  return path.win32.normalize(rawPath);
+  return normalizePath(projectPath);
 }
 
 /**

@@ -6,8 +6,11 @@ const {
   getManagedOpenClawStateDir,
   isOpenClawProjectDir,
   detectProjectPackageManager,
-  normalizeProjectPath,
 } = require('../../runtime/openclaw/openclaw-project') as typeof import('../../runtime/openclaw/openclaw-project');
+
+const {
+  normalizePath,
+} = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
 
 const {
   clearOpenClawDeploymentConfig,
@@ -19,20 +22,7 @@ const {
   checkDependencies,
   OPENCLAW_MIN_NODE_VERSION,
   checkPnpmAvailable,
-  getCommandLookupEnv,
 } = require('../../core/diagnostics/system-check') as typeof import('../../core/diagnostics/system-check');
-
-const {
-  checkCommand,
-  runCommand,
-} = require('../../shared/process/process-utils') as typeof import('../../shared/process/process-utils');
-const {
-  getGithubMirrors,
-  getMirrorRepo,
-} = require('../../packaging/release/release-sources') as typeof import('../../packaging/release/release-sources');
-
-// 从平台模块导入安装策略
-const { getPackageInstallAttempts, getGithubDirectConnected } = require('../../platform/install') as typeof import('../../platform/install');
 
 export function checkOpenClawRuntimeReadiness(projectPath: string, options?: { useBundledNode?: boolean }): { ready: boolean; error?: string } {
   if (!isOpenClawProjectDir(projectPath)) {
@@ -58,160 +48,22 @@ export function checkOpenClawRuntimeReadiness(projectPath: string, options?: { u
   return { ready: true };
 }
 
-function getCurrentGitBranch(projectPath: string): string {
-  const branchResult = runCommand('git branch --show-current', projectPath, {
-    ignoreError: true,
-    silent: true,
-  });
-  const branch = String(branchResult.stdout || '').trim();
-  return branch || 'main';
-}
-
-export function resolveRemoteDefaultRef(projectPath: string): string {
-  const originHead = runCommand('git symbolic-ref refs/remotes/origin/HEAD', projectPath, {
-    ignoreError: true,
-    silent: true,
-  });
-
-  if (originHead.success && originHead.stdout) {
-    const match = originHead.stdout.trim().match(/^refs\/remotes\/origin\/(.+)$/);
-    if (match?.[1]) {
-      return `origin/${match[1]}`;
-    }
-  }
-
-  const mainRef = runCommand('git rev-parse --verify origin/main', projectPath, {
-    ignoreError: true,
-    silent: true,
-  });
-  if (mainRef.success) {
-    return 'origin/main';
-  }
-
-  const masterRef = runCommand('git rev-parse --verify origin/master', projectPath, {
-    ignoreError: true,
-    silent: true,
-  });
-  if (masterRef.success) {
-    return 'origin/master';
-  }
-
-  return 'origin/main';
-}
-
 export function handleUpdateOpenClaw(
-  config: Record<string, unknown>,
-  deps: {
+  _config: Record<string, unknown>,
+  _deps: {
     logError: (error: Error, context?: string) => void;
     getUserFriendlyMessage: (error: unknown) => string;
     getUpdateState?: () => { mode: string };
   }
 ): Record<string, unknown> {
-  // 检查龙虾助手更新状态（required 模式阻止 OpenClaw 更新）
-  if (deps.getUpdateState) {
-    const updateState = deps.getUpdateState();
-    if (updateState.mode === 'required') {
-      return {
-        success: false,
-        error: '龙虾助手版本过低，需要先更新到最新版本。请在 Web 控制台点击"立即更新"按钮。',
-        updateRequired: true,
-      };
-    }
-  }
-
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
-  if (!installPath || !isOpenClawProjectDir(installPath)) {
-    return { success: false, error: '请先部署' };
-  }
-
-  // 检查 .git 目录是否存在
-  if (!fs.existsSync(path.join(installPath, '.git'))) {
-    return { success: false, error: '当前安装版本不支持在线更新，请重新部署最新版本' };
-  }
-
-  // 检查 git 是否可用
-  if (!checkCommand('git')) {
-    return { success: false, error: '未找到 Git，请先安装 Git 后再更新' };
-  }
-
-  try {
-    const branch = getCurrentGitBranch(installPath);
-    let fetchTarget = 'origin';
-    let fetchResult = runCommand('git fetch origin', installPath, {
-      timeout: 60000,
-      ignoreError: true,
-      silent: true,
-    });
-    if (!fetchResult.success) {
-      // 添加总重试次数限制，防止无限循环
-      const MAX_MIRROR_RETRIES = Math.min(getGithubMirrors().length, 5);
-      for (let index = 0; index < MAX_MIRROR_RETRIES; index++) {
-        const repoUrl = getMirrorRepo(index);
-        const mirrorFetch = runCommand(`git fetch --depth 1 ${repoUrl} ${branch}`, installPath, {
-          timeout: 120000,
-          ignoreError: true,
-          silent: true,
-        });
-        if (mirrorFetch.success) {
-          fetchResult = mirrorFetch;
-          fetchTarget = 'FETCH_HEAD';
-          break;
-        }
-      }
-    }
-
-    if (!fetchResult.success) {
-      return { success: false, error: fetchResult.stderr || '无法获取远程版本信息' };
-    }
-
-    const remoteRef = fetchTarget === 'origin'
-      ? resolveRemoteDefaultRef(installPath)
-      : fetchTarget;
-    const localResult = runCommand('git rev-parse HEAD', installPath);
-    const remoteResult = runCommand(`git rev-parse ${remoteRef}`, installPath);
-
-    if (!localResult.success || !remoteResult.success) {
-      return { success: false, error: '无法获取版本信息' };
-    }
-
-    if (localResult.stdout === remoteResult.stdout) {
-      return { success: true, message: '已是最新版本' };
-    }
-
-    const resetResult = runCommand(`git reset --hard ${remoteRef}`, installPath);
-    if (!resetResult.success) {
-      return { success: false, error: resetResult.stderr || '更新失败' };
-    }
-
-    const projectPackageManager = detectProjectPackageManager(installPath);
-    if (projectPackageManager === 'pnpm' && !checkPnpmAvailable()) {
-      return { success: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再更新' };
-    }
-
-    let installResult: ReturnType<typeof runCommand> = { success: false };
-    const installAttempts = getPackageInstallAttempts(installPath, getCommandLookupEnv(), getGithubDirectConnected());
-    for (let index = 0; index < installAttempts.length; index++) {
-      const attempt = installAttempts[index];
-      installResult = runCommand(attempt.command, installPath, {
-        timeout: 300000,
-        ignoreError: true,
-        env: attempt.env,
-      });
-      if (installResult.success) {
-        break;
-      }
-    }
-    if (!installResult.success) {
-      return { success: false, error: installResult.stderr || '依赖安装失败' };
-    }
-
-    // npm 包已预编译，无需 build 步骤
-    return { success: true, message: 'OpenClaw 更新成功！' };
-  } catch (e) {
-    const error = e as Error;
-    deps.logError(error, 'update-openclaw');
-    return { success: false, error: deps.getUserFriendlyMessage(error) };
-  }
+  // OpenClaw 不支持在线更新，请联系售后服务
+  void _config;
+  void _deps;
+  return {
+    success: false,
+    error: 'OpenClaw 更新请联系售后服务获取最新版本',
+    contactSupport: true,
+  };
 }
 
 export async function handleUninstallOpenClaw(
@@ -236,7 +88,7 @@ export async function handleUninstallOpenClaw(
     }
   }
 
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
+  const installPath = normalizePath(String(config.installPath || '').trim());
   const managedStateDir = getManagedOpenClawStateDir(config);
   const removedPaths: string[] = [];
 

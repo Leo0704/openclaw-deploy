@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { getPlatformAdapter } from '../index';
-import { normalizeProjectPath, isOpenClawProjectDir, readJsonFile } from '../path/platform-paths';
+import { normalizePath, isOpenClawProjectDir, readJsonFile } from '../path/platform-paths';
 
 const APP_NAME = 'openclaw-deploy';
 
@@ -55,8 +55,8 @@ function getManagedOpenClawBaseDir(config: Record<string, unknown>): string {
   // 离线包模式：使用 openclawPath（openclaw 子目录）
   // 传统模式：使用 installPath（直接是 openclaw 项目目录）
   const projectPath = config.useBundledNode && config.openclawPath
-    ? normalizeProjectPath(String(config.openclawPath))
-    : normalizeProjectPath(String(config.installPath || '').trim());
+    ? normalizePath(String(config.openclawPath))
+    : normalizePath(String(config.installPath || '').trim());
 
   if (projectPath && isOpenClawProjectDir(projectPath) && canUseProjectManagedStorage(projectPath)) {
     return path.join(projectPath, '.claude');

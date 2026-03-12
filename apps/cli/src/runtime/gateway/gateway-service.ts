@@ -357,20 +357,33 @@ async function handleStartInternal(
     const startCommand = getOpenClawStartCommand(installPath, gatewayPort);
     deps.appendLog('info', `启动命令: ${startCommand}`);
 
-    const parsedCommand = parseCommandForSpawn(startCommand);
-    if (!parsedCommand.file) {
-      deps.setGatewayStatus('stopped');
-      return { success: false, error: '无法解析 OpenClaw 启动命令' };
-    }
-    parsedCommand.file = resolveSpawnExecutable(parsedCommand.file);
-
     const isWin = os.platform() === 'win32';
-    const processRef = spawn(parsedCommand.file, parsedCommand.args, {
-      cwd: installPath,
-      env,
-      shell: isWin,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let processRef;
+
+    if (isWin) {
+      // Windows: 使用 shell 执行完整命令字符串，确保路径中的空格被正确处理
+      processRef = spawn(startCommand, [], {
+        cwd: installPath,
+        env,
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } else {
+      // POSIX: 使用 parseCommandForSpawn 解析命令
+      const parsedCommand = parseCommandForSpawn(startCommand);
+      if (!parsedCommand.file) {
+        deps.setGatewayStatus('stopped');
+        return { success: false, error: '无法解析 OpenClaw 启动命令' };
+      }
+      parsedCommand.file = resolveSpawnExecutable(parsedCommand.file);
+
+      processRef = spawn(parsedCommand.file, parsedCommand.args, {
+        cwd: installPath,
+        env,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }
     deps.setGatewayProcess(processRef);
     let startupSettled = false;
     let lastStderr = '';

@@ -90,9 +90,10 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       const res = await api('deploy-status', {}, 30000);
       if (!state.deployPolling) return;
 
+      // 超时或失败时继续重试，不停止轮询
       if (!res.success || !res.task) {
-        state.deployPolling = false;
-        toast(res.error || '无法获取部署状态', 'error');
+        console.warn('获取部署状态失败，1秒后重试:', res.error);
+        setTimeout(pollDeployTask, 1000);
         return;
       }
 

@@ -31,11 +31,11 @@ export function renderWebUiClientBootstrap(config: Record<string, unknown>, stat
       if (!activeElement) return false;
       const tagName = activeElement.tagName.toLowerCase();
       // 检查是否在输入框、文本域或选择框中
-      if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+      if (['input', 'textarea', 'select'].includes(tagName)) {
         return true;
       }
-      // 检查是否在配置视图
-      if (state.currentView === 'config') {
+      // 检查是否在可编辑元素中
+      if (activeElement.isContentEditable) {
         return true;
       }
       return false;

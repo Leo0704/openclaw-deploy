@@ -115,36 +115,55 @@ describe('OpenClaw Project Functions', () => {
   });
 
   describe('getOpenClawStartCommand', () => {
+    // 新逻辑：优先使用 node openclaw.mjs
     function getOpenClawStartCommandLogic(
+      hasOpenclawBin: boolean,
       packageManager: 'pnpm' | 'npm',
       port: number
     ): string {
+      if (hasOpenclawBin) {
+        // 直接使用 node openclaw.mjs
+        return `node openclaw.mjs gateway run --port ${port} --allow-unconfigured`;
+      }
+      // Fallback: 使用 pnpm/npm 脚本
       if (packageManager === 'pnpm') {
         return `pnpm openclaw gateway run --port ${port} --allow-unconfigured`;
       }
       return `npm run openclaw -- gateway run --port ${port} --allow-unconfigured`;
     }
 
-    it('should generate pnpm start command', () => {
-      const result = getOpenClawStartCommandLogic('pnpm', 18789);
-      expect(result).toContain('pnpm');
+    it('should use node openclaw.mjs when bin exists', () => {
+      const result = getOpenClawStartCommandLogic(true, 'pnpm', 18789);
+      expect(result).toContain('node');
+      expect(result).toContain('openclaw.mjs');
       expect(result).toContain('18789');
     });
 
-    it('should generate npm start command', () => {
-      const result = getOpenClawStartCommandLogic('npm', 18789);
+    it('should fallback to pnpm when bin does not exist', () => {
+      const result = getOpenClawStartCommandLogic(false, 'pnpm', 18789);
+      expect(result).toContain('pnpm');
+      expect(result).toContain('openclaw');
+    });
+
+    it('should fallback to npm when bin does not exist', () => {
+      const result = getOpenClawStartCommandLogic(false, 'npm', 18789);
       expect(result).toContain('npm');
       expect(result).toContain('18789');
     });
 
     it('should include gateway run command', () => {
-      const result = getOpenClawStartCommandLogic('pnpm', 18789);
+      const result = getOpenClawStartCommandLogic(true, 'pnpm', 18789);
       expect(result).toContain('gateway run');
     });
 
     it('should include allow-unconfigured flag', () => {
-      const result = getOpenClawStartCommandLogic('npm', 18789);
+      const result = getOpenClawStartCommandLogic(true, 'npm', 18789);
       expect(result).toContain('--allow-unconfigured');
+    });
+
+    it('should include port parameter', () => {
+      const result = getOpenClawStartCommandLogic(true, 'pnpm', 3000);
+      expect(result).toContain('--port 3000');
     });
   });
 

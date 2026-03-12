@@ -48,6 +48,105 @@ const BUNDLED_SOURCE_TAR = path.join(__dirname, '../../../assets/openclaw-source
 const BUNDLED_SOURCE_ZIP = path.join(__dirname, '../../../assets/openclaw-source.zip');
 const BUNDLED_VERSION_FILE = path.join(__dirname, '../../../assets/openclaw-version.json');
 
+/**
+ * 修改 package.json，移除需要编译工具或 Git SSH 的依赖
+ * 解决 Windows 上 node-llama-cpp 编译失败和 git+ssh 访问问题
+ */
+async function fixPackageJsonForWindows(
+  projectPath: string,
+  deps: DeployTaskDeps
+): Promise<void> {
+  const packageJsonPath = path.join(projectPath, 'package.json');
+
+  if (!fs.existsSync(packageJsonPath)) {
+    deps.addLog('警告: 未找到 package.json，跳过依赖修复', 'warning');
+    return;
+  }
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+    let modified = false;
+
+    // 1. 从 onlyBuiltDependencies 移除 node-llama-cpp
+    if (pkg.pnpm && typeof pkg.pnpm === 'object' && 'onlyBuiltDependencies' in pkg.pnpm) {
+      const onlyBuiltDeps = (pkg.pnpm as Record<string, unknown>).onlyBuiltDependencies as string[];
+      if (Array.isArray(onlyBuiltDeps)) {
+        const idx = onlyBuiltDeps.indexOf('node-llama-cpp');
+        if (idx !== -1) {
+          onlyBuiltDeps.splice(idx, 1);
+          modified = true;
+          deps.addLog('已移除 node-llama-cpp from onlyBuiltDependencies', 'info');
+        }
+      }
+    }
+
+    // 2. 从 peerDependencies 移除 node-llama-cpp
+    if (pkg.peerDependencies && typeof pkg.peerDependencies === 'object') {
+      const peerDeps = pkg.peerDependencies as Record<string, string>;
+      if ('node-llama-cpp' in peerDeps) {
+        delete peerDeps['node-llama-cpp'];
+        modified = true;
+        deps.addLog('已从 peerDependencies 移除 node-llama-cpp', 'info');
+      }
+    }
+
+    // 3. 将 node-llama-cpp 添加到 optionalDependencies
+    if (!pkg.optionalDependencies || typeof pkg.optionalDependencies !== 'object') {
+      pkg.optionalDependencies = {};
+    }
+    const optionalDeps = pkg.optionalDependencies as Record<string, string>;
+    if (!optionalDeps['node-llama-cpp']) {
+      optionalDeps['node-llama-cpp'] = '3.16.2';
+      modified = true;
+      deps.addLog('已将 node-llama-cpp 添加到 optionalDependencies', 'info');
+    }
+
+    if (modified) {
+      fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + '\n');
+      deps.addLog('package.json 已修复 ✓', 'success');
+    }
+  } catch (error) {
+    deps.addLog(`修复 package.json 失败: ${error instanceof Error ? error.message : '未知错误'}`, 'warning');
+  }
+}
+
+/**
+ * 创建 .npmrc 和 git 配置，解决无 VPN 下的 git+ssh 访问问题
+ */
+async function createNpmrcForNoVpn(
+  projectPath: string,
+  deps: DeployTaskDeps
+): Promise<void> {
+  const npmrcPath = path.join(projectPath, '.npmrc');
+  const gitconfigPath = path.join(projectPath, '.gitconfig');
+
+  try {
+    // 1. 创建 .npmrc
+    if (!fs.existsSync(npmrcPath)) {
+      const npmrcContent = `# 龙虾助手：解决无 VPN 下的 Git 依赖问题
+enable-pre-post-scripts=true
+`;
+      fs.writeFileSync(npmrcPath, npmrcContent);
+      deps.addLog('已创建 .npmrc 配置', 'info');
+    }
+
+    // 2. 创建 .gitconfig，将 git@ 转换为 https://
+    if (!fs.existsSync(gitconfigPath)) {
+      const gitconfigContent = `[url "https://github.com/"]
+    insteadOf = git@github.com:
+    insteadOf = git://github.com/
+
+[url "https://github.com/"]
+    insteadOf = git@github.com/
+`;
+      fs.writeFileSync(gitconfigPath, gitconfigContent);
+      deps.addLog('已创建 .gitconfig 配置（将 git@ 转换为 https://）', 'info');
+    }
+  } catch (error) {
+    deps.addLog(`创建配置文件失败: ${error instanceof Error ? error.message : '未知错误'}`, 'warning');
+  }
+}
+
 interface BundledSourceInfo {
   version: string;
   commit: string;
@@ -251,6 +350,12 @@ export async function performDeployTask(
       }
       fs.mkdirSync(path.dirname(installPath), { recursive: true });
       fs.cpSync(extractedRoot, installPath, { recursive: true });
+
+      // 修改 package.json，移除需要编译/Git SSH 的依赖
+      await fixPackageJsonForWindows(installPath, deps);
+
+      // 创建 .npmrc 配置，解决 git+ssh 访问问题
+      await createNpmrcForNoVpn(installPath, deps);
 
       deps.addLog(`源码安装成功 ✓ ${sourceInfo ? `(v${sourceInfo.version})` : ''}`, 'success');
       return { success: true };

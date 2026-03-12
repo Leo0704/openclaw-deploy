@@ -48,6 +48,39 @@ git clone --depth 1 --branch "$VERSION" "$OPENCLAW_REPO" "$TEMP_DIR/openclaw" 2>
 
 cd "$TEMP_DIR/openclaw"
 
+# ========== 新增：修改 package.json，移除需要编译/Git SSH 的依赖 ==========
+echo -e "${YELLOW}🔧 修改 package.json，移除问题依赖...${NC}"
+if [ -f package.json ]; then
+    # 使用 node 来修改 package.json
+    node -e "
+    const fs = require('fs');
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+    // 1. 从 onlyBuiltDependencies 移除 node-llama-cpp
+    if (pkg.pnpm && pkg.pnpm.onlyBuiltDependencies) {
+        pkg.pnpm.onlyBuiltDependencies = pkg.pnpm.onlyBuiltDependencies.filter(dep => dep !== 'node-llama-cpp');
+        console.log('已从 onlyBuiltDependencies 移除 node-llama-cpp');
+    }
+
+    // 2. 从 peerDependencies 移除 node-llama-cpp
+    if (pkg.peerDependencies && pkg.peerDependencies['node-llama-cpp']) {
+        delete pkg.peerDependencies['node-llama-cpp'];
+        console.log('已从 peerDependencies 移除 node-llama-cpp');
+    }
+
+    // 3. 将 node-llama-cpp 添加到 optionalDependencies（如果需要可选）
+    if (!pkg.optionalDependencies) pkg.optionalDependencies = {};
+    pkg.optionalDependencies['node-llama-cpp'] = pkg.optionalDependencies['node-llama-cpp'] || '3.16.2';
+    console.log('已添加 node-llama-cpp 到 optionalDependencies');
+
+    fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+    "
+    echo -e "${GREEN}✓ package.json 修改完成${NC}"
+else
+    echo -e "${YELLOW}⚠ 未找到 package.json，跳过修改${NC}"
+fi
+# =============================================================================
+
 # 获取版本信息
 COMMIT=$(git rev-parse --short HEAD)
 BRANCH=$(git branch --show-current || echo "main")

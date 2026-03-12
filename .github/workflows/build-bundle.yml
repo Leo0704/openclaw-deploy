@@ -143,7 +143,7 @@ jobs:
           set "PATH=%NODE_PATH%;%PATH%"
           cd /d "%SCRIPT_DIR%openclaw"
           echo Starting OpenClaw...
-          "%SCRIPT_DIR%node\node.exe" openclaw.mjs %*
+          "%SCRIPT_DIR%node\node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
           BATCH
           fi
 
@@ -155,7 +155,7 @@ jobs:
           export PATH="$SCRIPT_DIR/node/bin:$PATH"
           cd "$SCRIPT_DIR/openclaw"
           echo "Starting OpenClaw..."
-          "$SCRIPT_DIR/node/bin/node" openclaw.mjs "$@"
+          "$SCRIPT_DIR/node/bin/node" openclaw.mjs gateway run --port 18789 --allow-unconfigured "$@"
           BASHSCRIPT
             chmod +x bundle/start.sh
           fi

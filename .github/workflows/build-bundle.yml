@@ -65,20 +65,45 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "node_version=${NODE_VER}" >> $GITHUB_OUTPUT
 
-      - name: Clone OpenClaw
+      - name: Clone OpenClaw (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $VERSION = "${{ steps.version.outputs.version }}"
+          git clone --depth 1 --branch "v${VERSION}" ${{ env.OPENCLAW_REPO }} openclaw 2>$null
+          if (!(Test-Path openclaw)) { git clone --depth 1 ${{ env.OPENCLAW_REPO }} openclaw }
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Set-Location openclaw
+          pnpm install --frozen-lockfile 2>$null; if ($LASTEXITCODE) { pnpm install }
+
+      - name: Build OpenClaw (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Set-Location openclaw
+          pnpm build
+
+      - name: Clone OpenClaw (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           git clone --depth 1 --branch "v${VERSION}" ${{ env.OPENCLAW_REPO }} openclaw || \
           git clone --depth 1 ${{ env.OPENCLAW_REPO }} openclaw
 
-      - name: Install dependencies
+      - name: Install dependencies (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd openclaw
           pnpm install --frozen-lockfile || pnpm install
 
-      - name: Build OpenClaw
+      - name: Build OpenClaw (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd openclaw
@@ -90,10 +115,11 @@ jobs:
         env:
           NODE_VERSION: ${{ steps.version.outputs.node_version }}
         run: |
+          $env:NODE_VERSION = "${{ steps.version.outputs.node_version }}"
           Invoke-WebRequest -Uri "https://nodejs.org/dist/v${env:NODE_VERSION}/node-v${env:NODE_VERSION}-win-x64.zip" -OutFile "node.zip"
           Expand-Archive -Path "node.zip" -DestinationPath "." -Force
           New-Item -ItemType Directory -Path "bundle/node" -Force
-          Move-Item -Path "node-v${env:NODE_VERSION}-win-x64/*" -Destination "bundle/node/"
+          Move-Item -Path "node-v${env:NODE_VERSION}-win-x64\*" -Destination "bundle/node/" -Force
 
       - name: Download Node.js (macOS/Linux)
         if: runner.os != 'Windows'

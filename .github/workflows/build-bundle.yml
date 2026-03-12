@@ -10,10 +10,11 @@ on:
       node_version:
         description: 'Node.js version'
         required: true
-        default: '22.12.0'
+        default: '22.14.0'
 
 env:
   OPENCLAW_REPO: 'https://github.com/openclaw/openclaw.git'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   build:
@@ -39,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ github.event.inputs.node_version || '22.12.0' }}
+          node-version: ${{ github.event.inputs.node_version || '22.14.0' }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -146,11 +147,11 @@ jobs:
 
           # 创建版本文件
           cat > bundle/VERSION << EOF
-          openclaw: ${VERSION}
-          node: ${NODE_VERSION}
-          platform: ${PLATFORM}
-          build_date: $(date '+%Y-%m-%d %H:%M:%S')
-          EOF
+openclaw: ${VERSION}
+node: ${NODE_VERSION}
+platform: ${PLATFORM}
+build_date: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'

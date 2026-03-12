@@ -12,6 +12,15 @@ const {
   normalizeEndpointId,
 } = require('../providers/provider-utils') as typeof import('../providers/provider-utils');
 const {
+  buildOpenClawModelsJson,
+  buildOpenClawAgentsConfig,
+} = require('../providers/provider-catalog') as typeof import('../providers/provider-catalog');
+const {
+  writeManagedOpenClawConfig,
+  getManagedOpenClawConfigPath,
+  readManagedOpenClawConfig,
+} = require('../../platform/storage/storage-paths') as typeof import('../../platform/storage/storage-paths');
+const {
   getOfflineBundleInfo,
   detectInstall,
   detectDownloadedBundle,
@@ -98,6 +107,10 @@ export async function performDeployTask(
       config.bundledNodePath = existingInstall.nodePath;
       config.openclawPath = existingInstall.openclawPath;
       saveConfig(config);
+
+      // 写入 OpenClaw 原生格式配置
+      await writeOpenClawNativeConfig(config, deps);
+
       deps.addLog('部署完成！', 'success');
       return { success: true, config, status: deps.getGatewayRuntimeStatus(config) };
     }
@@ -170,7 +183,12 @@ export async function performDeployTask(
     config.useBundledNode = true;
     config.bundledNodePath = startCmd.nodePath;
     config.openclawPath = startCmd.openclawPath;
+
+    // 保存龙虾助手配置
     saveConfig(config);
+
+    // 写入 OpenClaw 原生格式配置
+    await writeOpenClawNativeConfig(config, deps);
 
     deps.addLog('部署完成！', 'success');
     return { success: true, config, status: deps.getGatewayRuntimeStatus(config) };
@@ -179,5 +197,72 @@ export async function performDeployTask(
     deps.addLog(`部署失败: ${(error as Error).message}`, 'error');
     deps.logError(error as Error, 'deploy-task');
     return { success: false, error: deps.getUserFriendlyMessage(error) };
+  }
+}
+
+/**
+ * 写入 OpenClaw 原生格式的配置文件
+ * - models.json: 模型 provider 配置
+ * - openclaw.json: agents 配置（默认模型）
+ */
+async function writeOpenClawNativeConfig(
+  config: Record<string, unknown>,
+  deps: DeployTaskDeps
+): Promise<void> {
+  try {
+    const provider = String(config.provider || '');
+    const model = String(config.model || '');
+    const apiKey = String(config.apiKey || '');
+
+    if (!provider || !model) {
+      deps.addLog('跳过 OpenClaw 配置写入（未配置模型）', 'info');
+      return;
+    }
+
+    // 生成 models.json 配置
+    const modelsConfig = buildOpenClawModelsJson(provider, model, apiKey);
+    deps.addLog(`生成模型配置: ${provider}/${model}`, 'info');
+
+    // 生成 agents 配置
+    const agentsConfig = buildOpenClawAgentsConfig(provider, model);
+
+    // 读取现有配置
+    const existingConfig = readManagedOpenClawConfig(config);
+    const existingModels = (existingConfig.config.models as Record<string, unknown>) || {};
+    const existingAgents = (existingConfig.config.agents as Record<string, unknown>) || {};
+
+    // 合并配置
+    const modelsProviders = (modelsConfig.providers as Record<string, unknown>) || {};
+    const agentsData = (agentsConfig.agents as Record<string, unknown>) || {};
+    const agentsDefaults = (agentsData.defaults as Record<string, unknown>) || {};
+
+    const mergedModels = {
+      ...existingModels,
+      providers: {
+        ...((existingModels.providers as Record<string, unknown>) || {}),
+        ...modelsProviders,
+      },
+    };
+
+    const mergedAgents = {
+      ...existingAgents,
+      defaults: {
+        ...((existingAgents.defaults as Record<string, unknown>) || {}),
+        ...agentsDefaults,
+      },
+    };
+
+    // 写入合并后的配置
+    const finalConfig = {
+      ...existingConfig.config,
+      models: mergedModels,
+      agents: mergedAgents,
+    };
+
+    writeManagedOpenClawConfig(config, finalConfig);
+    deps.addLog('已写入 OpenClaw 原生配置 ✓', 'success');
+
+  } catch (error) {
+    deps.addLog(`写入 OpenClaw 配置失败: ${error instanceof Error ? error.message : '未知错误'}`, 'warning');
   }
 }

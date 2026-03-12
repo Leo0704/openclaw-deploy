@@ -75,7 +75,7 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
       }
       // 部署成功后，服务端返回的 status 应该已包含 installed: true
       // 如果没有，手动设置（兼容旧逻辑）
-      if (!state.status.installed) {
+      if (state.status && !state.status.installed) {
         state.status = {
           ...state.status,
           installed: true,

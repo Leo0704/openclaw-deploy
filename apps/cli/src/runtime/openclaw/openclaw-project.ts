@@ -77,20 +77,7 @@ export function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; co
 
 export function getOpenClawStartCommand(projectPath: string, port: number): string {
   projectPath = normalizeProjectPath(projectPath);
-  // 直接使用 node openclaw.mjs，因为部署包中不包含 scripts/run-node.mjs
-  // openclaw.mjs 是 bin 入口点，直接调用 dist/entry.js
-  const openclawBin = path.join(projectPath, 'openclaw.mjs');
-  if (fs.existsSync(openclawBin)) {
-    return formatShellCommand('node', [
-      openclawBin,
-      'gateway',
-      'run',
-      '--port',
-      String(port),
-      '--allow-unconfigured',
-    ]);
-  }
-  // Fallback: 尝试使用 pnpm/npm 脚本（可能在开发环境中）
+  // 优先使用 pnpm/npm 脚本启动，确保 ES Module 正确加载
   const pm = detectProjectPackageManager(projectPath);
   if (pm === 'pnpm') {
     const invocation = getPnpmInvocation();

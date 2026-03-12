@@ -49,7 +49,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ github.event.inputs.node_version || '22.14.0' }}
+          node-version: ${{ github.event.inputs.node_version || inputs.node_version || '22.14.0' }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -230,8 +230,7 @@ jobs:
           | 平台 | 文件 |
           |------|------|
           | Windows x64 | \`openclaw-win-x64-${VERSION}.zip\` |
-          | macOS ARM64 (M1/M2) | \`openclaw-macos-arm64-${VERSION}.tar.gz\` |
-          | macOS x64 (Intel) | \`openclaw-macos-x64-${VERSION}.tar.gz\` |
+          | macOS ARM64 (M1/M2/M3) | \`openclaw-macos-arm64-${VERSION}.tar.gz\` |
           | Linux x64 | \`openclaw-linux-x64-${VERSION}.tar.gz\` |
 
           ## 使用方法

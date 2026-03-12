@@ -52,9 +52,14 @@ function getManagedOpenClawBaseDir(config: Record<string, unknown>): string {
     return getFallbackOpenClawBaseDir();
   }
 
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
-  if (installPath && isOpenClawProjectDir(installPath) && canUseProjectManagedStorage(installPath)) {
-    return path.join(installPath, '.claude');
+  // 离线包模式：使用 openclawPath（openclaw 子目录）
+  // 传统模式：使用 installPath（直接是 openclaw 项目目录）
+  const projectPath = config.useBundledNode && config.openclawPath
+    ? normalizeProjectPath(String(config.openclawPath))
+    : normalizeProjectPath(String(config.installPath || '').trim());
+
+  if (projectPath && isOpenClawProjectDir(projectPath) && canUseProjectManagedStorage(projectPath)) {
+    return path.join(projectPath, '.claude');
   }
   return getFallbackOpenClawBaseDir();
 }

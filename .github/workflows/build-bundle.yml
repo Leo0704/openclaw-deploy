@@ -1,0 +1,234 @@
+name: Build OpenClaw Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenClaw version (e.g., 2026.3.8)'
+        required: true
+        default: '2026.3.8'
+      node_version:
+        description: 'Node.js version'
+        required: true
+        default: '22.12.0'
+
+env:
+  OPENCLAW_REPO: 'https://github.com/openclaw/openclaw.git'
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win-x64
+            runner: windows-latest
+          - platform: macos-arm64
+            runner: macos-latest
+          - platform: macos-x64
+            runner: macos-13
+          - platform: linux-x64
+            runner: ubuntu-latest
+
+    steps:
+      - name: Checkout lobster
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ github.event.inputs.node_version || '22.12.0' }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Get version info
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version || '2026.3.8' }}"
+          NODE_VER="${{ github.event.inputs.node_version || '22.12.0' }}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "node_version=${NODE_VER}" >> $GITHUB_OUTPUT
+
+      - name: Clone OpenClaw
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git clone --depth 1 --branch "v${VERSION}" ${{ env.OPENCLAW_REPO }} openclaw || \
+          git clone --depth 1 ${{ env.OPENCLAW_REPO }} openclaw
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          cd openclaw
+          pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build OpenClaw
+        shell: bash
+        run: |
+          cd openclaw
+          pnpm build
+
+      - name: Download Node.js (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          NODE_VERSION: ${{ steps.version.outputs.node_version }}
+        run: |
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v${env:NODE_VERSION}/node-v${env:NODE_VERSION}-win-x64.zip" -OutFile "node.zip"
+          Expand-Archive -Path "node.zip" -DestinationPath "." -Force
+          New-Item -ItemType Directory -Path "bundle/node" -Force
+          Move-Item -Path "node-v${env:NODE_VERSION}-win-x64/*" -Destination "bundle/node/"
+
+      - name: Download Node.js (macOS/Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          NODE_VERSION: ${{ steps.version.outputs.node_version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          if [ "$PLATFORM" = "macos-arm64" ]; then
+            ARCH="darwin-arm64"
+          elif [ "$PLATFORM" = "macos-x64" ]; then
+            ARCH="darwin-x64"
+          else
+            ARCH="linux-x64"
+          fi
+
+          curl -LO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${ARCH}.tar.gz"
+          tar -xzf "node-v${NODE_VERSION}-${ARCH}.tar.gz"
+          mkdir -p bundle/node
+          mv node-v${NODE_VERSION}-${ARCH}/* bundle/node/
+
+      - name: Create bundle
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NODE_VERSION: ${{ steps.version.outputs.node_version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # 复制 OpenClaw（排除 .git 目录以减小体积）
+          mkdir -p bundle/openclaw
+          rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+
+          # 创建启动脚本 (Windows)
+          if [ "$PLATFORM" = "win-x64" ]; then
+            cat > bundle/start.bat << 'EOF'
+          @echo off
+          chcp 65001 >nul
+          setlocal
+          set "SCRIPT_DIR=%~dp0"
+          set "NODE_PATH=%SCRIPT_DIR%node"
+          set "PATH=%NODE_PATH%;%PATH%"
+          cd /d "%SCRIPT_DIR%openclaw"
+          echo Starting OpenClaw...
+          "%SCRIPT_DIR%node\node.exe" openclaw.mjs %*
+          EOF
+          fi
+
+          # 创建启动脚本 (Unix)
+          if [ "$PLATFORM" != "win-x64" ]; then
+            cat > bundle/start.sh << 'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          export PATH="$SCRIPT_DIR/node/bin:$PATH"
+          cd "$SCRIPT_DIR/openclaw"
+          echo "Starting OpenClaw..."
+          "$SCRIPT_DIR/node/bin/node" openclaw.mjs "$@"
+          EOF
+            chmod +x bundle/start.sh
+          fi
+
+          # 创建版本文件
+          cat > bundle/VERSION << EOF
+          openclaw: ${VERSION}
+          node: ${NODE_VERSION}
+          platform: ${PLATFORM}
+          build_date: $(date '+%Y-%m-%d %H:%M:%S')
+          EOF
+
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cd bundle
+          7z a -tzip "../openclaw-${PLATFORM}-${VERSION}.zip" *
+
+      - name: Create archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cd bundle
+          tar -czvf "../openclaw-${PLATFORM}-${VERSION}.tar.gz" *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-${{ matrix.platform }}
+          path: |
+            openclaw-${{ matrix.platform }}-*
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List files
+        run: ls -lah artifacts/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.event.inputs.version || '2026.3.8' }}
+        run: |
+          TAG="bundle-v${VERSION}"
+
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "OpenClaw ${VERSION} 离线包" \
+            --notes "## OpenClaw ${VERSION} 离线安装包
+
+          内置 Node.js 运行时，无需安装任何依赖。
+
+          ## 下载
+
+          | 平台 | 文件 |
+          |------|------|
+          | Windows x64 | \`openclaw-win-x64-${VERSION}.zip\` |
+          | macOS ARM64 (M1/M2) | \`openclaw-macos-arm64-${VERSION}.tar.gz\` |
+          | macOS x64 (Intel) | \`openclaw-macos-x64-${VERSION}.tar.gz\` |
+          | Linux x64 | \`openclaw-linux-x64-${VERSION}.tar.gz\` |
+
+          ## 使用方法
+
+          1. 下载对应平台的压缩包
+          2. 解压到任意目录
+          3. Windows: 双击 \`start.bat\`
+          4. macOS/Linux: 运行 \`./start.sh\`
+
+          ## 龙虾助手用户
+
+          下载后放到**下载目录**，然后在龙虾助手中点击部署即可。
+          " \
+            artifacts/* || \
+          gh release upload "${TAG}" artifacts/* --clobber

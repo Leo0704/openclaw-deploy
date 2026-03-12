@@ -34,7 +34,7 @@ const {
 // 从平台模块导入安装策略
 const { getPackageInstallAttempts, getGithubDirectConnected } = require('../../platform/install') as typeof import('../../platform/install');
 
-export function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boolean; error?: string } {
+export function checkOpenClawRuntimeReadiness(projectPath: string, options?: { useBundledNode?: boolean }): { ready: boolean; error?: string } {
   if (!isOpenClawProjectDir(projectPath)) {
     return { ready: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
   }
@@ -43,9 +43,12 @@ export function checkOpenClawRuntimeReadiness(projectPath: string): { ready: boo
     return { ready: false, error: 'OpenClaw 安装目录缺少 package.json，请重新部署' };
   }
 
-  const packageManager = detectProjectPackageManager(projectPath);
-  if (packageManager === 'pnpm' && !checkPnpmAvailable()) {
-    return { ready: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再启动' };
+  // 离线包模式下跳过 pnpm 检查（依赖已内置）
+  if (!options?.useBundledNode) {
+    const packageManager = detectProjectPackageManager(projectPath);
+    if (packageManager === 'pnpm' && !checkPnpmAvailable()) {
+      return { ready: false, error: '当前 OpenClaw 源码要求使用 pnpm，请先安装 pnpm，或确认 corepack / npm 可用后再启动' };
+    }
   }
 
   if (!fs.existsSync(path.join(projectPath, 'node_modules'))) {

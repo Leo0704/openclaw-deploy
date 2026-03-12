@@ -14,6 +14,7 @@ import {
   normalizeProjectPath,
   readJsonFile,
   isOpenClawProjectDir,
+  getOpenClawProjectPath,
 } from '../../platform/path/platform-paths';
 import {
   getOpenClawConfigPath,
@@ -75,12 +76,16 @@ export function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; co
   return { pm, command: 'npm install' };
 }
 
-export function getOpenClawStartCommand(projectPath: string, port: number): string {
+export function getOpenClawStartCommand(projectPath: string, port: number, bundledNodePath?: string): string {
   projectPath = normalizeProjectPath(projectPath);
+
+  // 确定使用的 Node.js 路径
+  const nodePath = bundledNodePath || 'node';
+
   // 直接运行 openclaw.mjs（npm 发布包不包含 scripts/run-node.mjs）
   const openclawBin = path.join(projectPath, 'openclaw.mjs');
   if (fs.existsSync(openclawBin)) {
-    return formatShellCommand('node', [
+    return formatShellCommand(nodePath, [
       openclawBin,
       'gateway',
       'run',
@@ -124,6 +129,7 @@ export {
   getManagedOpenClawConfigPath,
   getManagedOpenClawStateDir,
   getManagedOpenClawSkillsDir,
+  getOpenClawProjectPath,
   readManagedOpenClawConfig,
   readOpenClawRuntimeConfig,
   writeManagedOpenClawConfig,

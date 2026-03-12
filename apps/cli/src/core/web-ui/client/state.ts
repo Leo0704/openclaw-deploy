@@ -27,6 +27,7 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
       deployPolling: false,
       deployTask: null,
       pendingDeployPayload: null,
+      selectedBundlePath: null,
       skillsLoaded: false,
       skillsLoading: false,
       channelsLoaded: false,

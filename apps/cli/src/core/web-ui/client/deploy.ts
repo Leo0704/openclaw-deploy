@@ -97,6 +97,13 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
         return;
       }
 
+      // 检查是否需要下载
+      if (res.task.needDownload && res.task.bundleInfo) {
+        state.deployPolling = false;
+        renderDownloadGuide(res.task.bundleInfo);
+        return;
+      }
+
       if (res.task.config) {
         state.config = res.task.config;
       }
@@ -125,80 +132,93 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
     }
 
     async function executeDeploy(payload) {
+      state.pendingDeployPayload = payload;
+
       const res = await api('deploy-start', payload, 30000);
       if (!res.success) {
-        showError('部署启动失败', res.error || '未知错误');
+        // 检查是否需要下载
+        if (res.needDownload && res.bundleInfo) {
+          renderDownloadGuide(res.bundleInfo);
+          return;
+        }
+        showError('部署失败', res.error || '未知错误');
         return;
       }
 
       state.deployTask = res.task || null;
       state.deployPolling = true;
+      state.pendingDeployPayload = null;
       renderDeployTask(state.deployTask || { state: 'running', logs: [] });
       await pollDeployTask();
     }
 
     function hasActionablePrecheckRecovery(health) {
-      const checks = Array.isArray(health?.checks) ? health.checks : [];
-      return checks.some(check => {
-        if (check.passed) return false;
-        return check.name === 'Node.js 版本' || check.name === 'Git' || check.name === '包管理器';
-      });
+      // 离线包模式不再需要这些预检恢复
+      return false;
     }
 
     function buildPrecheckRecoveryCards(health) {
-      const cards = [];
-      const checks = Array.isArray(health?.checks) ? health.checks : [];
-      const hasBlockingErrors = Array.isArray(health?.errors) && health.errors.length > 0;
-      const nodeCheck = checks.find(check => check.name === 'Node.js 版本' && !check.passed);
-      const packageCheck = checks.find(check => check.name === '包管理器' && !check.passed);
-      const gitCheck = checks.find(check => check.name === 'Git' && !check.passed);
+      // 离线包模式不再需要这些
+      return '';
+    }
 
-      if (nodeCheck) {
-        cards.push([
-          '<div class="panel" style="margin-top:16px">',
-          '  <div class="panel-title">Node.js 需要手动安装</div>',
-          '  <div class="panel-copy">当前部署 OpenClaw 要求 <span class="mono">Node.js >= ${OPENCLAW_MIN_NODE_VERSION}</span>。这个依赖不会自动安装，请先手动下载安装，再回来重新点击部署。</div>',
-          '  <div class="actions" style="margin-top:14px">',
-          '    <a class="btn btn-primary" href="https://nodejs.org/en/download" target="_blank" rel="noopener">下载 Node.js</a>',
-          '  </div>',
-          '</div>',
-        ].join(''));
-      }
+    function renderDownloadGuide(bundleInfo) {
+      const mainCard = $('main-card');
+      mainCard.innerHTML = \`
+        <h2 class="card-title">需要 OpenClaw 安装包</h2>
+        <div class="note note-info" style="margin-bottom:16px">
+          💡 如果您下载的是"龙虾助手+离线包"压缩包，请先解压，然后直接点击"开始部署"，系统会自动检测同目录下的离线包。
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-title">手动选择安装包</div>
+          <div class="panel-copy">
+            如果自动检测失败，您可以手动选择已下载的安装包文件。
+            <br><br>
+            <strong>文件名：</strong><span class="mono">\${bundleInfo.fileName}</span>
+            <br>
+            <strong>平台：</strong>\${bundleInfo.platform}
+            <br>
+            <strong>版本：</strong>v\${bundleInfo.version}
+          </div>
+          <div class="actions" style="margin-top:14px">
+            <button class="btn btn-secondary" id="select-bundle-btn">选择安装包文件</button>
+            <input type="file" id="bundle-file-input" style="display:none" accept=".zip,.tar.gz,.gz">
+          </div>
+          <div id="selected-file" style="margin-top:12px;color:var(--text-secondary);font-size:13px"></div>
+        </div>
+        <div class="actions" style="margin-top:20px">
+          <button class="btn btn-primary" id="redeploy-btn" disabled>继续部署</button>
+          <button class="btn btn-secondary" onclick="goDashboard()">稍后再说</button>
+        </div>
+      \`;
 
-      if (gitCheck) {
-        cards.push([
-          '<div class="panel" style="margin-top:16px">',
-          '  <div class="panel-title">Git 获取方式</div>',
-          '  <div class="panel-copy">Git 缺失时，龙虾助手在进入正式部署后会优先尝试自动安装；如果自动安装失败，再用下面的下载入口手动安装。</div>',
-          '  <div class="actions" style="margin-top:14px">',
-          '    <a class="btn btn-secondary" href="https://git-scm.com/downloads" target="_blank" rel="noopener">下载 Git</a>',
-          '  </div>',
-          '</div>',
-        ].join(''));
-      }
+      const fileInput = $('bundle-file-input');
+      const selectedFile = $('selected-file');
+      const redeployBtn = $('redeploy-btn');
 
-      if (packageCheck) {
-        cards.push([
-          '<div class="panel" style="margin-top:16px">',
-          '  <div class="panel-title">pnpm 获取方式</div>',
-          '  <div class="panel-copy">pnpm 缺失时，龙虾助手会优先尝试自动安装；如果自动安装失败，或你想手动安装，可以直接打开官方安装说明。</div>',
-          '  <div class="actions" style="margin-top:14px">',
-          '    <a class="btn btn-secondary" href="https://pnpm.io/installation" target="_blank" rel="noopener">打开 pnpm 安装说明</a>',
-          '  </div>',
-          '</div>',
-        ].join(''));
-      }
+      $('select-bundle-btn')?.addEventListener('click', () => {
+        fileInput?.click();
+      });
 
-      if (!cards.length && hasBlockingErrors) {
-        cards.push([
-          '<div class="panel" style="margin-top:16px">',
-          '  <div class="panel-title">手动修复建议</div>',
-          '  <div class="panel-copy">当前存在阻塞项。请先按上面的错误提示修复，再重新点击部署。</div>',
-          '</div>',
-        ].join(''));
-      }
+      fileInput?.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          state.selectedBundlePath = file.path || file.name;
+          selectedFile.innerHTML = \`已选择: <span class="mono">\${file.name}</span>\`;
+          redeployBtn.disabled = false;
+        }
+      });
 
-      return cards.join('');
+      redeployBtn?.addEventListener('click', () => {
+        const payload = state.pendingDeployPayload || {
+          installPath: state.config.installPath,
+          apiKey: state.config.apiKey,
+          model: state.config.model,
+          provider: state.config.provider,
+        };
+        payload.bundlePath = state.selectedBundlePath;
+        executeDeploy(payload);
+      });
     }
 
     async function deploy() {

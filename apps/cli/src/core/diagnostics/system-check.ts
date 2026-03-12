@@ -505,69 +505,91 @@ export function checkDependencies(): DependencyResult {
 
 /**
  * 执行部署前健康检查
+ * @param config 检查配置
+ * @param options 选项，offlineBundleMode 表示是否为离线包模式
  */
 export async function performHealthChecks(config: {
   installPath: string;
   gatewayPort: number;
   requiredDiskSpace?: number;
-}): Promise<PreDeployCheckResult> {
+}, options?: { offlineBundleMode?: boolean }): Promise<PreDeployCheckResult> {
   const checks: HealthCheckResult[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
-  const installState = detectExistingInstallState(config.installPath);
+  const offlineMode = options?.offlineBundleMode !== false; // 默认为离线包模式
 
-  // 1. Node.js 版本检查
-  const nodeCheck = checkNodeVersion(OPENCLAW_MIN_NODE_VERSION);
-  checks.push({
-    name: 'Node.js 版本',
-    passed: nodeCheck.valid,
-    message: nodeCheck.message || '',
-    severity: 'critical',
-    details: { current: nodeCheck.current, required: nodeCheck.required },
-  });
-  if (!nodeCheck.valid) {
-    errors.push(`Node.js 版本过低，请升级到 v${nodeCheck.required} 或更高版本`);
-  }
+  // 离线包模式下，不需要检查本地依赖
+  if (!offlineMode) {
+    // 传统模式：检查本地依赖
+    const installState = detectExistingInstallState(config.installPath);
 
-  // 2. Git 检查（仅更新功能需要）
-  const gitAvailable = checkCommand('git');
-  checks.push({
-    name: 'Git',
-    passed: gitAvailable,
-    message: gitAvailable ? 'Git 已安装' : '未找到 Git，在线更新功能将不可用',
-    severity: gitAvailable ? 'info' : 'warning',
-    details: { version: getCommandVersion('git') },
-  });
-  if (!gitAvailable) {
-    warnings.push('未找到 Git，在线更新功能将不可用');
-  }
+    // 1. Node.js 版本检查
+    const nodeCheck = checkNodeVersion(OPENCLAW_MIN_NODE_VERSION);
+    checks.push({
+      name: 'Node.js 版本',
+      passed: nodeCheck.valid,
+      message: nodeCheck.message || '',
+      severity: 'critical',
+      details: { current: nodeCheck.current, required: nodeCheck.required },
+    });
+    if (!nodeCheck.valid) {
+      errors.push(`Node.js 版本过低，请升级到 v${nodeCheck.required} 或更高版本`);
+    }
 
-  // 3. npm/pnpm 检查
-  const npmAvailable = checkCommand('npm');
-  const pnpmReady = checkPnpmAvailable();
-  const requiresPnpm = installState.kind === 'openclaw-project' ? installState.packageManager === 'pnpm' : true;
-  checks.push({
-    name: '包管理器',
-    passed: requiresPnpm ? pnpmReady : npmAvailable,
-    message: requiresPnpm
-      ? pnpmReady
-        ? installState.kind === 'openclaw-project'
-          ? '检测到当前 OpenClaw 目录要求 pnpm，pnpm 已安装'
-          : 'OpenClaw 部署要求 pnpm，pnpm 已安装'
-        : installState.kind === 'openclaw-project'
-          ? '检测到当前 OpenClaw 目录要求 pnpm，但当前未发现已安装的 pnpm'
-          : 'OpenClaw 部署要求 pnpm，但当前未发现已安装的 pnpm'
-      : npmAvailable
+    // 2. Git 检查（仅更新功能需要）
+    const gitAvailable = checkCommand('git');
+    checks.push({
+      name: 'Git',
+      passed: gitAvailable,
+      message: gitAvailable ? 'Git 已安装' : '未找到 Git，在线更新功能将不可用',
+      severity: gitAvailable ? 'info' : 'warning',
+      details: { version: getCommandVersion('git') },
+    });
+    if (!gitAvailable) {
+      warnings.push('未找到 Git，在线更新功能将不可用');
+    }
+
+    // 3. npm/pnpm 检查
+    const npmAvailable = checkCommand('npm');
+    const pnpmReady = checkPnpmAvailable();
+    const requiresPnpm = installState.kind === 'openclaw-project' ? installState.packageManager === 'pnpm' : true;
+    checks.push({
+      name: '包管理器',
+      passed: requiresPnpm ? pnpmReady : npmAvailable,
+      message: requiresPnpm
         ? pnpmReady
-          ? 'pnpm 已安装 (推荐)'
-          : 'npm 已安装'
-        : '未找到 npm',
-    severity: 'critical',
-  });
-  if (requiresPnpm && !pnpmReady) {
-    warnings.push('当前 OpenClaw 目录要求 pnpm，部署时会优先尝试 Corepack、npm exec 和镜像源自动获取 pnpm');
-  } else if (!npmAvailable) {
-    errors.push('未找到 npm，请先安装 Node.js: https://nodejs.org');
+          ? installState.kind === 'openclaw-project'
+            ? '检测到当前 OpenClaw 目录要求 pnpm，pnpm 已安装'
+            : 'OpenClaw 部署要求 pnpm，pnpm 已安装'
+          : installState.kind === 'openclaw-project'
+            ? '检测到当前 OpenClaw 目录要求 pnpm，但当前未发现已安装的 pnpm'
+            : 'OpenClaw 部署要求 pnpm，但当前未发现已安装的 pnpm'
+        : npmAvailable
+          ? pnpmReady
+            ? 'pnpm 已安装 (推荐)'
+            : 'npm 已安装'
+          : '未找到 npm',
+      severity: 'critical',
+    });
+    if (requiresPnpm && !pnpmReady) {
+      warnings.push('当前 OpenClaw 目录要求 pnpm，部署时会优先尝试 Corepack、npm exec 和镜像源自动获取 pnpm');
+    } else if (!npmAvailable) {
+      errors.push('未找到 npm，请先安装 Node.js: https://nodejs.org');
+    }
+  } else {
+    // 离线包模式：添加信息性检查项
+    checks.push({
+      name: '运行环境',
+      passed: true,
+      message: '离线包模式，运行时已内置，无需本地安装 Node.js',
+      severity: 'info',
+    });
+    checks.push({
+      name: '包管理器',
+      passed: true,
+      message: '离线包模式，依赖已内置，无需本地安装 pnpm/npm',
+      severity: 'info',
+    });
   }
 
   // 4. 磁盘空间检查

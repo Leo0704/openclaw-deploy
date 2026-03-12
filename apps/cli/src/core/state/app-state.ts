@@ -141,10 +141,13 @@ function getGatewayRuntimeStatus(
   }
 ): GatewayRuntimeStatus {
   const gatewayPort = Number(config.gatewayPort || deps.defaultGatewayPort);
-  const installPath = String(config.installPath || '');
+  // 离线包模式：检查 openclawPath；传统模式：检查 installPath
+  const projectPath = config.useBundledNode && config.openclawPath
+    ? String(config.openclawPath)
+    : String(config.installPath || '');
   const tokenResolution = deps.resolveGatewayToken(config);
   return {
-    installed: !!installPath && deps.isOpenClawProjectDir(installPath),
+    installed: !!projectPath && deps.isOpenClawProjectDir(projectPath),
     running: gatewayStatus === 'running' || gatewayStatus === 'starting',
     state: gatewayStatus,
     gatewayPort,

@@ -209,7 +209,14 @@ async function handleStartInternal(
   if (!config.apiKey) {
     return { success: false, error: '请先配置 API Key' };
   }
-  const installPathCheck = validateInstallPathForUse(String(config.installPath || '').trim(), {
+
+  // 离线包模式：openclawPath 指向 openclaw 子目录
+  // 传统模式：installPath 直接指向 openclaw 项目
+  const projectPath = config.useBundledNode && config.openclawPath
+    ? String(config.openclawPath)
+    : String(config.installPath || '').trim();
+
+  const installPathCheck = validateInstallPathForUse(projectPath, {
     requireProject: true,
   });
   if (!installPathCheck.valid) {
@@ -224,7 +231,9 @@ async function handleStartInternal(
     return { success: true, message: '服务已在运行中' };
   }
 
-  const runtimeReadiness = checkOpenClawRuntimeReadiness(installPath);
+  const runtimeReadiness = checkOpenClawRuntimeReadiness(installPath, {
+    useBundledNode: !!config.useBundledNode,
+  });
   if (!runtimeReadiness.ready) {
     return { success: false, error: runtimeReadiness.error || 'OpenClaw 运行环境未就绪' };
   }
@@ -354,7 +363,12 @@ async function handleStartInternal(
       [provider.envKey]: String(config.apiKey || ''),
     };
 
-    const startCommand = getOpenClawStartCommand(installPath, gatewayPort);
+    // 使用内置 Node.js（如果配置了）
+    const bundledNodePath = config.useBundledNode && config.bundledNodePath
+      ? String(config.bundledNodePath)
+      : undefined;
+
+    const startCommand = getOpenClawStartCommand(installPath, gatewayPort, bundledNodePath);
     deps.appendLog('info', `启动命令: ${startCommand}`);
 
     const isWin = os.platform() === 'win32';

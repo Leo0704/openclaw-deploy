@@ -8,6 +8,7 @@ const fs = require('fs') as typeof import('fs');
 const {
   isOpenClawProjectDir,
   normalizeProjectPath,
+  getOpenClawProjectPath,
   readManagedOpenClawConfig,
   writeManagedOpenClawConfig,
 } = require('../openclaw/openclaw-project') as typeof import('../openclaw/openclaw-project');
@@ -173,7 +174,7 @@ export function handleSaveFeishuChannel(data: Record<string, unknown>, config: R
 
 function validateSkillInstallRequest(data: Record<string, unknown>, config: Record<string, unknown>): { skillId?: string; error?: string } {
   const skillId = String(data.skill || '').trim();
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
+  const installPath = getOpenClawProjectPath(config);
   if (!skillId) {
     return { error: '请指定技能名称' };
   }
@@ -231,7 +232,7 @@ export async function handleSkillInstall(data: Record<string, unknown>, config: 
     return { success: false, error: validation.error };
   }
   const skillId = validation.skillId as string;
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
+  const installPath = getOpenClawProjectPath(config);
 
   try {
     const gatewayPort = Number(config.gatewayPort || DEFAULT_GATEWAY_PORT);
@@ -307,7 +308,7 @@ export async function handleSkillInstall(data: Record<string, unknown>, config: 
 
 export async function handleSkillUninstall(data: Record<string, unknown>, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const skillId = String(data.skill || '').trim();
-  const installPath = normalizeProjectPath(String(config.installPath || '').trim());
+  const installPath = getOpenClawProjectPath(config);
   if (!skillId) {
     return { success: false, error: '请指定技能名称' };
   }

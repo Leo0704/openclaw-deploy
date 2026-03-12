@@ -220,6 +220,21 @@ export function isOpenClawProject(projectPath: string): boolean {
 }
 
 /**
+ * 从配置中获取 OpenClaw 项目路径
+ *
+ * 离线包模式：config.openclawPath (如 ~/openclaw/openclaw)
+ * 传统模式：config.installPath (如 ~/openclaw)
+ */
+export function getOpenClawProjectPath(config: Record<string, unknown>): string {
+  // 离线包模式：openclawPath 是实际的项目目录
+  if (config.useBundledNode && config.openclawPath) {
+    return normalizeProjectPath(String(config.openclawPath));
+  }
+  // 传统模式：installPath 就是项目目录
+  return normalizeProjectPath(String(config.installPath || '').trim());
+}
+
+/**
  * 验证路径是否为 OpenClaw 项目目录（使用 normalizeProjectPath）
  */
 export function isOpenClawProjectDir(projectPath: string): boolean {

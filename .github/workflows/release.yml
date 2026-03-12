@@ -17,10 +17,6 @@ jobs:
             target: node22-macos-arm64
             asset_name: lobster-macos-arm64
             app_zip_name: lobster-macos-arm64-app.zip
-          - runner: macos-latest
-            target: node22-macos-x64
-            asset_name: lobster-macos-x64
-            app_zip_name: lobster-macos-x64-app.zip
           - runner: ubuntu-latest
             target: node22-linux-x64
             asset_name: lobster-linux-x64

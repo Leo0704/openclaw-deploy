@@ -341,11 +341,13 @@ export function buildOpenClawAgentsConfig(
     modelConfig.alias = modelAlias;
   }
 
-  // 使用 string 格式（更简洁）
+  // 使用 object 格式，支持 primary + fallbacks
   return {
     agents: {
       defaults: {
-        model: modelRef,
+        model: {
+          primary: modelRef,
+        },
         models: {
           [modelRef]: modelConfig,
         },

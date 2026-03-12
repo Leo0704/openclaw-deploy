@@ -243,9 +243,6 @@ async function writeOpenClawNativeConfig(
     // 生成 agents 配置（包含自定义模型别名）
     const agentsConfig = buildOpenClawAgentsConfig(provider, finalModel, customModelAlias);
 
-    // 生成 agents 配置
-    const agentsConfig = buildOpenClawAgentsConfig(provider, model);
-
     // 读取现有配置
     const existingConfig = readManagedOpenClawConfig(config);
     const existingModels = (existingConfig.config.models as Record<string, unknown>) || {};

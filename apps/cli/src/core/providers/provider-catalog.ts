@@ -259,13 +259,17 @@ const PROVIDERS: Record<string, {
  * @param model 模型 ID
  * @param apiKey API Key
  * @param customBaseUrl 自定义 API 地址（用于 custom provider）
+ * @param apiFormat API 格式
+ * @param customEndpointId 自定义 endpoint ID
  * @returns OpenClaw 格式的 models 配置对象
  */
 export function buildOpenClawModelsJson(
   providerKey: string,
   model: string,
   apiKey: string,
-  customBaseUrl?: string
+  customBaseUrl?: string,
+  apiFormat?: string,
+  customEndpointId?: string
 ): Record<string, unknown> {
   const provider = PROVIDERS[providerKey];
   if (!provider) {
@@ -288,8 +292,14 @@ export function buildOpenClawModelsJson(
   const providerBaseUrl = providerKey === 'custom' && customBaseUrl ? customBaseUrl : provider.baseUrl;
   const providerConfig: Record<string, unknown> = {
     baseUrl: providerBaseUrl,
-    api: provider.api || provider.apiFormat,
+    // 如果指定了 apiFormat 或 customEndpointId，使用它们
+    api: (apiFormat && apiFormat !== 'openai-completions') ? apiFormat : (provider.api || provider.apiFormat),
   };
+
+  // 添加 customEndpointId
+  if (customEndpointId && providerKey === 'custom') {
+    providerConfig.endpointId = customEndpointId;
+  }
 
   // 添加 API Key（写入环境变量引用）
   if (apiKey) {
@@ -320,10 +330,23 @@ export function buildOpenClawModelsJson(
 /**
  * 获取默认的 OpenClaw agents 配置
  * 设置默认模型
+ * @param providerKey provider 标识符
+ * @param model 模型 ID
+ * @param modelAlias 模型别名（可选）
  */
-export function buildOpenClawAgentsConfig(providerKey: string, model: string): Record<string, unknown> {
+export function buildOpenClawAgentsConfig(
+  providerKey: string,
+  model: string,
+  modelAlias?: string
+): Record<string, unknown> {
   // 模型引用格式：provider/model-id
   const modelRef = `${providerKey}/${model}`;
+
+  // 构建模型别名配置
+  const modelConfig: Record<string, unknown> = {};
+  if (modelAlias) {
+    modelConfig.alias = modelAlias;
+  }
 
   return {
     agents: {
@@ -332,9 +355,7 @@ export function buildOpenClawAgentsConfig(providerKey: string, model: string): R
           primary: modelRef,
         },
         models: {
-          [modelRef]: {
-            // 可以添加 alias 等配置
-          },
+          [modelRef]: modelConfig,
         },
       },
     },

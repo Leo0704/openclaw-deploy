@@ -11,16 +11,6 @@ on:
         description: 'Node.js version'
         required: true
         default: '22.14.0'
-      platform:
-        description: 'Platform to build (leave empty for all)'
-        required: false
-        default: ''
-        type: choice
-        options:
-          - all
-          - win-x64
-          - macos-arm64
-          - linux-x64
   workflow_call:
     inputs:
       version:
@@ -32,11 +22,6 @@ on:
         required: false
         type: string
         default: '22.14.0'
-      platform:
-        description: 'Platform to build'
-        required: false
-        type: string
-        default: ''
 
 env:
   OPENCLAW_REPO: 'https://github.com/openclaw/openclaw.git'
@@ -49,7 +34,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [win-x64, macos-arm64, linux-x64]
         include:
           - platform: win-x64
             runner: windows-latest

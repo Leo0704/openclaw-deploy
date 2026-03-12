@@ -186,10 +186,9 @@ export async function checkSelfUpdate(deps: SelfUpdateDeps): Promise<UpdateResul
     const platform = os.platform();
     const arch = os.arch();
     let assetName: string;
-    if (platform === 'darwin' && arch === 'arm64') {
+    if (platform === 'darwin') {
+      // macOS 统一使用 ARM64 版本（Intel Mac 通过 Rosetta 运行）
       assetName = 'lobster-macos-arm64';
-    } else if (platform === 'darwin') {
-      assetName = 'lobster-macos-x64';
     } else if (platform === 'win32') {
       assetName = 'lobster-win-x64.exe';
     } else {
@@ -422,10 +421,9 @@ export async function checkForUpdates(deps: SelfUpdateDeps): Promise<UpdateState
     const platform = os.platform();
     const arch = os.arch();
     let assetName: string;
-    if (platform === 'darwin' && arch === 'arm64') {
+    if (platform === 'darwin') {
+      // macOS 统一使用 ARM64 版本（Intel Mac 通过 Rosetta 运行）
       assetName = 'lobster-macos-arm64';
-    } else if (platform === 'darwin') {
-      assetName = 'lobster-macos-x64';
     } else if (platform === 'win32') {
       assetName = 'lobster-win-x64.exe';
     } else {

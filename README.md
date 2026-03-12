@@ -50,10 +50,8 @@
 
 从 release 下载对应平台的安装包：
 
-- `lobster-macos-arm64-app.zip` - macOS Apple Silicon 推荐下载
-- `lobster-macos-x64-app.zip` - macOS Intel 推荐下载
-- `lobster-macos-arm64` - macOS Apple Silicon 原始二进制
-- `lobster-macos-x64` - macOS Intel 原始二进制
+- `lobster-macos-arm64-app.zip` - macOS Apple Silicon (M1/M2/M3) 推荐下载
+- `lobster-macos-arm64` - macOS 原始二进制
 - `lobster-linux-x64`
 - `lobster-win-x64.exe`
 

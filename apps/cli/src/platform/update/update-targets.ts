@@ -39,7 +39,8 @@ export function getManagedSelfInstallTarget(): UpdateTargetPaths {
     const installRoot = path.join(os.homedir(), '.local', 'share', 'LobsterAssistant');
     return {
       installRoot,
-      targetExecPath: path.join(installRoot, os.arch() === 'arm64' ? 'lobster-macos-arm64' : 'lobster-macos-x64'),
+      // macOS 统一使用 ARM64 版本
+      targetExecPath: path.join(installRoot, 'lobster-macos-arm64'),
       metadataPath: path.join(installRoot, 'install-meta.json'),
     };
   }

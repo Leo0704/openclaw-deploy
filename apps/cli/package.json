@@ -9,8 +9,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "clean": "rm -rf dist bin",
-    "pkg": "pkg . --targets node22-macos-arm64,node22-macos-x64,node22-linux-x64,node22-win-x64 --output-path bin",
-    "pkg:mac-app": "npm run build && rm -rf bin && mkdir -p bin && npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64 && npx @yao-pkg/pkg dist/index.js --targets node22-macos-x64 --output bin/lobster-macos-x64 && ../../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip $(node -p \"require('./package.json').version\") && ../../scripts/build-macos-app.sh bin/lobster-macos-x64 bin/lobster-macos-x64-app.zip $(node -p \"require('./package.json').version\")"
+    "pkg": "pkg . --targets node22-macos-arm64,node22-linux-x64,node22-win-x64 --output-path bin",
+    "pkg:mac-app": "npm run build && rm -rf bin && mkdir -p bin && npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64 && ../../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip $(node -p \"require('./package.json').version\")"
   },
   "pkg": {
     "scripts": "dist/**/*.js",

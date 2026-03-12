@@ -33,13 +33,14 @@ export interface OfflineBundleInfo {
 
 /**
  * 获取当前平台标识
+ * 注意: macOS Intel 用户使用 ARM64 版本（通过 Rosetta 运行）
  */
 export function getPlatform(): string {
   const p = os.platform();
   const arch = process.arch;
 
   if (p === 'win32') return 'win-x64';
-  if (p === 'darwin') return arch === 'arm64' ? 'macos-arm64' : 'macos-x64';
+  if (p === 'darwin') return 'macos-arm64'; // 统一使用 ARM64 版本
   if (p === 'linux') return 'linux-x64';
 
   throw new Error(`不支持的平台: ${p} ${arch}`);

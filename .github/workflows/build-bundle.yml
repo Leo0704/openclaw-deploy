@@ -60,8 +60,8 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="${{ github.event.inputs.version || '2026.3.8' }}"
-          NODE_VER="${{ github.event.inputs.node_version || '22.12.0' }}"
+          VERSION="${{ github.event.inputs.version || inputs.version || '2026.3.8' }}"
+          NODE_VER="${{ github.event.inputs.node_version || inputs.node_version || '22.14.0' }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "node_version=${NODE_VER}" >> $GITHUB_OUTPUT
 

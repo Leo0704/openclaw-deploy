@@ -118,8 +118,7 @@ jobs:
             --notes "## 下载
           选择适合你系统的版本：
           - **macOS (Apple Silicon, 推荐)**: \`lobster-macos-arm64-app.zip\`
-          - **macOS (Intel, 推荐)**: \`lobster-macos-x64-app.zip\`
-          - **macOS 原始二进制**: \`lobster-macos-arm64\` / \`lobster-macos-x64\`
+          - **macOS 原始二进制**: \`lobster-macos-arm64\`
           - **Linux**: \`lobster-linux-x64\`
           - **Windows**: \`lobster-win-x64.exe\`"
 
@@ -127,8 +126,6 @@ jobs:
             --repo Leo0704/lobster-releases \
             --clobber \
             release-assets/lobster-macos-arm64-app.zip \
-            release-assets/lobster-macos-x64-app.zip \
             release-assets/lobster-macos-arm64 \
-            release-assets/lobster-macos-x64 \
             release-assets/lobster-linux-x64 \
             release-assets/lobster-win-x64.exe

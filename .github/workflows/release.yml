@@ -144,3 +144,4 @@ jobs:
     with:
       version: '2026.3.8'
       node_version: '22.14.0'
+    secrets: inherit

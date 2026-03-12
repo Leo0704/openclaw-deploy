@@ -77,7 +77,19 @@ export function getInstallCommand(projectPath: string): { pm: 'pnpm' | 'npm'; co
 
 export function getOpenClawStartCommand(projectPath: string, port: number): string {
   projectPath = normalizeProjectPath(projectPath);
-  // 优先使用 pnpm/npm 脚本启动，确保 ES Module 正确加载
+  // 直接运行 openclaw.mjs（npm 发布包不包含 scripts/run-node.mjs）
+  const openclawBin = path.join(projectPath, 'openclaw.mjs');
+  if (fs.existsSync(openclawBin)) {
+    return formatShellCommand('node', [
+      openclawBin,
+      'gateway',
+      'run',
+      '--port',
+      String(port),
+      '--allow-unconfigured',
+    ]);
+  }
+  // 回退到 pnpm/npm 脚本（适用于从 git 克隆的完整仓库）
   const pm = detectProjectPackageManager(projectPath);
   if (pm === 'pnpm') {
     const invocation = getPnpmInvocation();

@@ -161,7 +161,7 @@ const {
   startDeployTask,
 } = require('../core/state/app-state') as typeof import('../core/state/app-state');
 
-const VERSION = '1.0.57';
+const VERSION = '1.0.59';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
@@ -300,6 +300,8 @@ function getGatewayLifecycleDeps() {
     getGatewayRuntimeStatusAsync,
     getUserFriendlyMessage: (error: unknown) => getUserFriendlyMessage(error as any),
     logError,
+    clearLogs,
+    getUpdateState: loadUpdateState,
     providers: PROVIDERS,
     defaultGatewayPort: DEFAULT_GATEWAY_PORT,
   };

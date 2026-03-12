@@ -56,7 +56,14 @@ export function createApiHandlers(deps: ApiHandlerDeps) {
           return { success: true };
 
         case 'uninstall-openclaw':
-          return deps.handleUninstallOpenClaw(config, deps.getGatewayLifecycleDeps());
+          return deps.handleUninstallOpenClaw(config, {
+            stopGatewayProcess: (cfg: Record<string, unknown>, timeoutMs?: number) =>
+              deps.stopGatewayProcess(cfg, deps.getGatewayLifecycleDeps(), timeoutMs),
+            getGatewayRuntimeStatus: deps.getGatewayRuntimeStatus,
+            logError: deps.logError,
+            clearLogs: deps.clearLogs,
+            getUpdateState: deps.getUpdateState,
+          });
 
         case 'update-openclaw':
           return deps.handleUpdateOpenClaw(config, {

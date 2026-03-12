@@ -115,26 +115,20 @@ jobs:
           mkdir -p bundle/node
           mv node-v${NODE_VERSION}-${ARCH}/* bundle/node/
 
-      - name: Create bundle
-        shell: bash
+      - name: Create bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
         env:
           VERSION: ${{ steps.version.outputs.version }}
           NODE_VERSION: ${{ steps.version.outputs.node_version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
-          # 复制 OpenClaw（排除 .git 目录以减小体积）
-          mkdir -p bundle/openclaw
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            # Windows: 使用 robocopy
-            robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS || true
-          else
-            # Unix: 使用 rsync
-            rsync -av --exclude='.git' openclaw/ bundle/openclaw/
-          fi
+          # 复制 OpenClaw
+          New-Item -ItemType Directory -Path bundle/openclaw -Force
+          robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS
 
-          # 创建启动脚本 (Windows)
-          if [ "$PLATFORM" = "win-x64" ]; then
-            cat > bundle/start.bat << 'BATCH'
+          # 创建启动脚本
+          @"
           @echo off
           chcp 65001 >nul
           setlocal
@@ -144,12 +138,28 @@ jobs:
           cd /d "%SCRIPT_DIR%openclaw"
           echo Starting OpenClaw...
           "%SCRIPT_DIR%node\node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
-          BATCH
-          fi
+          "@ | Out-File -FilePath bundle/start.bat -Encoding utf8
 
-          # 创建启动脚本 (Unix)
-          if [ "$PLATFORM" != "win-x64" ]; then
-            cat > bundle/start.sh << 'BASHSCRIPT'
+          # 创建版本文件
+          "openclaw: ${VERSION}" | Out-File -FilePath bundle/VERSION -Encoding utf8
+          "node: ${NODE_VERSION}" | Add-Content -Path bundle/VERSION
+          "platform: ${PLATFORM}" | Add-Content -Path bundle/VERSION
+          "build_date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Add-Content -Path bundle/VERSION
+
+      - name: Create bundle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NODE_VERSION: ${{ steps.version.outputs.node_version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # 复制 OpenClaw（排除 .git 目录以减小体积）
+          mkdir -p bundle/openclaw
+          rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+
+          # 创建启动脚本
+          cat > bundle/start.sh << 'BASHSCRIPT'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
           export PATH="$SCRIPT_DIR/node/bin:$PATH"
@@ -157,8 +167,7 @@ jobs:
           echo "Starting OpenClaw..."
           "$SCRIPT_DIR/node/bin/node" openclaw.mjs gateway run --port 18789 --allow-unconfigured "$@"
           BASHSCRIPT
-            chmod +x bundle/start.sh
-          fi
+          chmod +x bundle/start.sh
 
           # 创建版本文件
           echo "openclaw: ${VERSION}" > bundle/VERSION
@@ -168,13 +177,12 @@ jobs:
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: powershell
         env:
           VERSION: ${{ steps.version.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
-          cd bundle
-          7z a -tzip "../openclaw-${PLATFORM}-${VERSION}.zip" *
+          Compress-Archive -Path "bundle\*" -DestinationPath "openclaw-${PLATFORM}-${VERSION}.zip" -Force
 
       - name: Create archive (Unix)
         if: runner.os != 'Windows'

@@ -248,7 +248,11 @@ async function writeOpenClawNativeConfig(
       ...existingAgents,
       defaults: {
         ...((existingAgents.defaults as Record<string, unknown>) || {}),
-        ...agentsDefaults,
+        model: agentsDefaults.model || ((existingAgents.defaults as Record<string, unknown>)?.model as Record<string, unknown>) || {},
+        models: {
+          ...((existingAgents.defaults as Record<string, unknown>)?.models as Record<string, unknown>) || {},
+          ...(agentsDefaults.models as Record<string, unknown>) || {},
+        },
       },
     };
 

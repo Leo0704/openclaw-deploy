@@ -126,7 +126,13 @@ jobs:
         run: |
           # 复制 OpenClaw（排除 .git 目录以减小体积）
           mkdir -p bundle/openclaw
-          rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # Windows: 使用 robocopy
+            robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS || true
+          else
+            # Unix: 使用 rsync
+            rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+          fi
 
           # 创建启动脚本 (Windows)
           if [ "$PLATFORM" = "win-x64" ]; then

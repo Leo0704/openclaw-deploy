@@ -123,9 +123,16 @@ jobs:
           NODE_VERSION: ${{ steps.version.outputs.node_version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
-          # 复制 OpenClaw
-          New-Item -ItemType Directory -Path bundle/openclaw -Force
-          robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS
+          # 复制 OpenClaw（排除 .git 目录）
+          Get-ChildItem -Path openclaw -Recurse -File | Where-Object { $_.FullName -notmatch '\.git' } | ForEach-Object {
+            $dest = $_.FullName -replace '^openclaw', 'bundle/openclaw'
+            $destDir = Split-Path $dest -Parent
+            if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+            Copy-Item $_.FullName -Destination $dest -Force
+          }
+
+          # 复制 node 目录
+          Copy-Item -Path node -Destination bundle/node -Recurse -Force
 
           # 创建启动脚本
           @"

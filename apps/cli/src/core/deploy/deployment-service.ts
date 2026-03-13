@@ -45,6 +45,33 @@ export function checkOpenClawRuntimeReadiness(projectPath: string, options?: { u
     return { ready: false, error: 'OpenClaw 依赖尚未安装，请先执行"部署 OpenClaw"或手动安装依赖' };
   }
 
+  const packageJsonPath = path.join(projectPath, 'package.json');
+  let topLevelDeps: string[] = [];
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as { dependencies?: Record<string, unknown> };
+    topLevelDeps = Object.keys(packageJson.dependencies || {});
+  } catch {
+    return { ready: false, error: 'OpenClaw package.json 解析失败，请重新部署' };
+  }
+
+  const requiredPackages = Array.from(new Set([
+    ...topLevelDeps.map((name) => `${name}/package.json`),
+    'file-type/package.json',
+    'strtok3/package.json',
+  ]));
+
+  for (const packageRef of requiredPackages) {
+    try {
+      require.resolve(packageRef, { paths: [projectPath] });
+    } catch {
+      const packageName = packageRef.split('/')[0];
+      return {
+        ready: false,
+        error: `OpenClaw 依赖不完整（缺少 ${packageName}），请重新部署离线包或在安装目录执行 npm install`,
+      };
+    }
+  }
+
   return { ready: true };
 }
 

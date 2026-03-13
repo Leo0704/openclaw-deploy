@@ -117,6 +117,30 @@ jobs:
             exit 1
           }
 
+      - name: Rebuild production dependencies for portable bundle
+        working-directory: bundle/openclaw
+        run: |
+          if (Test-Path "node_modules") {
+            Remove-Item -Path "node_modules" -Recurse -Force
+          }
+          npm install --omit=dev
+
+      - name: Verify critical runtime dependencies
+        working-directory: bundle/openclaw
+        run: |
+          npm ls --omit=dev --all
+          $missing = @()
+          foreach ($pkg in @('file-type', 'strtok3')) {
+            if (-not (Test-Path "node_modules/$pkg/package.json")) {
+              $missing += $pkg
+            }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Host "Missing runtime dependencies: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "Runtime dependency check passed"
+
       - name: Create start.bat
         run: |
           $batContent = @"

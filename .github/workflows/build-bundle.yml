@@ -141,6 +141,15 @@ jobs:
           mkdir -p bundle/node
           mv node-v${NODE_VERSION}-${ARCH}/* bundle/node/
 
+      - name: Debug: List files (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Write-Host "=== openclaw dir ==="
+          if (Test-Path openclaw) { Get-ChildItem openclaw | Select-Object Name, Length } else { Write-Host "openclaw NOT FOUND" }
+          Write-Host "=== node dir ==="
+          if (Test-Path node) { Get-ChildItem node | Select-Object Name, Length } else { Write-Host "node NOT FOUND" }
+
       - name: Create bundle (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -149,16 +158,22 @@ jobs:
           NODE_VERSION: ${{ steps.version.outputs.node_version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
-          # 创建 bundle 目录
-          New-Item -ItemType Directory -Path bundle -Force | Out-Null
-          New-Item -ItemType Directory -Path bundle/node -Force | Out-Null
+          # 先创建目标目录
           New-Item -ItemType Directory -Path bundle/openclaw -Force | Out-Null
+          New-Item -ItemType Directory -Path bundle/node -Force | Out-Null
 
-          # 复制 OpenClaw（排除 .git 目录）
-          robocopy openclaw bundle/openclaw /E /XD .git /NJH /NJS /NC /NS /NP
+          # 用 PowerShell 复制目录（排除 .git）
+          Copy-Item -Path "openclaw\*" -Destination "bundle/openclaw\" -Recurse -Force -Exclude ".git"
 
-          # 复制 node 目录
-          robocopy node bundle/node /E /NJH /NJS /NC /NS /NP
+          # 复制 node
+          Copy-Item -Path "node" -Destination "bundle/" -Recurse -Force
+
+          # 验证文件数量
+          $openclawCount = (Get-ChildItem -Path bundle/openclaw -Recurse -File).Count
+          Write-Host "OpenClaw files copied: $openclawCount"
+          if ($openclawCount -lt 1000) {
+            Write-Host "WARNING: Less than 1000 files copied!"
+          }
 
           # 创建启动脚本
           $batContent = @"

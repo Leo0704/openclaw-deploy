@@ -176,7 +176,7 @@ export class WindowsPlatformAdapter implements PlatformAdapter {
   } {
     return {
       binary: 'openclaw-deploy-win-x64.exe',
-      offlineBundle: 'openclaw-deploy-win-offline.zip',
+      offlineBundle: 'openclaw-deploy-win-offline.tar.gz',
     };
   }
 }

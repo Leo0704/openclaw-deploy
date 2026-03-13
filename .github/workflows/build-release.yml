@@ -48,6 +48,9 @@ jobs:
       - name: Setup pnpm
         run: npm install -g pnpm@10
 
+      - name: Enable Git long paths
+        run: git config --global core.longpaths true
+
       - name: Clone OpenClaw
         run: |
           if (Test-Path openclaw) { Remove-Item -Recurse -Force openclaw }
@@ -74,10 +77,53 @@ jobs:
 
       - name: Create bundle
         run: |
+          if (Test-Path "bundle\openclaw") { Remove-Item -Recurse -Force "bundle\openclaw" }
+          # 先删除导致循环的符号链接，再用 robocopy
+          Remove-Item -Path "openclaw\node_modules\openclaw" -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
-          # 用 robocopy /SL 排除符号链接，解决循环嵌套问题
-          robocopy openclaw bundle/openclaw /E /XD .git /SL /NFL /NDL /NJH /NJS /R:3 /W:5
-          if ($LASTEXITCODE -ge 8) { exit 1 }
+          $maxAttempts = 2
+          $timeoutMs = 900000
+          $copySuccess = $false
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Host "Create bundle attempt $attempt/$maxAttempts"
+            $proc = Start-Process -FilePath robocopy -ArgumentList @(
+              'openclaw',
+              'bundle/openclaw',
+              '/E',
+              '/SL',
+              '/XD',
+              '.git',
+              '/NFL',
+              '/NDL',
+              '/NJH',
+              '/NJS',
+              '/R:3',
+              '/W:5'
+            ) -PassThru -NoNewWindow
+
+            if (-not $proc.WaitForExit($timeoutMs)) {
+              Write-Host "Create bundle timeout after $($timeoutMs / 1000) seconds, killing robocopy..."
+              try { $proc.Kill() } catch {}
+              if (Test-Path "bundle\openclaw") { Remove-Item -Recurse -Force "bundle\openclaw" }
+              New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
+              continue
+            }
+
+            if ($proc.ExitCode -lt 8) {
+              Write-Host "Create bundle succeeded with robocopy exit code $($proc.ExitCode)"
+              $copySuccess = $true
+              break
+            }
+
+            Write-Host "Create bundle failed with robocopy exit code $($proc.ExitCode)"
+            if (Test-Path "bundle\openclaw") { Remove-Item -Recurse -Force "bundle\openclaw" }
+            New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
+          }
+
+          if (-not $copySuccess) {
+            Write-Host "Create bundle failed after $maxAttempts attempts"
+            exit 1
+          }
 
       - name: Create start.bat
         run: |
@@ -105,7 +151,7 @@ jobs:
       - name: Create archive
         working-directory: bundle
         run: |
-          tar -czvf "../openclaw-win-x64-${{ env.OPENCLAW_VERSION }}.tar.gz" .
+          tar --force-local -czvf "../openclaw-win-x64-${{ env.OPENCLAW_VERSION }}.tar.gz" .
 
       - name: Cleanup
         run: |

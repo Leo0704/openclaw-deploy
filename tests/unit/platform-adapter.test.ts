@@ -340,7 +340,7 @@ describe('WindowsPlatformAdapter', () => {
     getReleaseAssetNames(): { binary: string; offlineBundle?: string } {
       return {
         binary: 'openclaw-deploy-win-x64.exe',
-        offlineBundle: 'openclaw-deploy-win-offline.zip',
+        offlineBundle: 'openclaw-deploy-win-offline.tar.gz',
       };
     }
   }
@@ -446,9 +446,9 @@ describe('WindowsPlatformAdapter', () => {
       expect(assets.binary).toContain('.exe');
     });
 
-    it('should return zip offline bundle', () => {
+    it('should return tar.gz offline bundle', () => {
       const assets = adapter.getReleaseAssetNames();
-      expect(assets.offlineBundle).toContain('.zip');
+      expect(assets.offlineBundle).toContain('.tar.gz');
     });
   });
 });

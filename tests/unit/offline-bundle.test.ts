@@ -72,7 +72,7 @@ describe('离线包信息生成', () => {
     const platform = getPlatform();
     const template = customUrl || OFFLINE_BUNDLE_URLS[platform];
     const downloadUrl = template.replace('{VERSION}', BUNDLE_VERSION);
-    const ext = platform === 'win-x64' ? '.zip' : '.tar.gz';
+    const ext = '.tar.gz';
     const fileName = `openclaw-${platform}-${BUNDLE_VERSION}${ext}`;
 
     return {
@@ -92,16 +92,15 @@ describe('离线包信息生成', () => {
     expect(info.fileName).toContain('openclaw-');
   });
 
-  it('Windows 应该使用 .zip 格式', () => {
-    const platform = 'win-x64';
-    const ext = platform === 'win-x64' ? '.zip' : '.tar.gz';
-    expect(ext).toBe('.zip');
+  it('Windows 应该使用 .tar.gz 格式', () => {
+    const ext = '.tar.gz';
+    expect(ext).toBe('.tar.gz');
   });
 
   it('Unix 平台应该使用 .tar.gz 格式', () => {
     const platforms = ['macos-arm64', 'linux-x64'];
-    for (const platform of platforms) {
-      const ext = platform === 'win-x64' ? '.zip' : '.tar.gz';
+    for (const _platform of platforms) {
+      const ext = '.tar.gz';
       expect(ext).toBe('.tar.gz');
     }
   });

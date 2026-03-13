@@ -121,8 +121,8 @@ jobs:
             - lobster-linux-x64
 
   build-lobster-windows:
-    docker:
-      - image: cimg/windows:vs2022
+    machine:
+      image: windows-server-2022
     steps:
       - checkout
       - run:
@@ -146,8 +146,8 @@ jobs:
   # ============================================
 
   build-openclaw-win:
-    docker:
-      - image: cimg/windows:vs2022
+    machine:
+      image: windows-server-2022
     steps:
       - checkout
       - run:
@@ -222,8 +222,9 @@ jobs:
       - run:
           name: Setup Node.js & pnpm
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | bash
-            sudo apt-get install -y nodejs
+            # macOS 使用 Homebrew 安装
+            brew install node@22
+            brew link node@22 --force
             npm install -g pnpm@10
       - run:
           name: Clone OpenClaw

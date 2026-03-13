@@ -475,7 +475,7 @@ async function extractTarGz(
     const normalizedInstallPath = isWindows ? installPath.replace(/\\/g, '/') : installPath;
 
     const args = isWindows
-      ? ['--force-local', '-xzf', normalizedArchivePath, '-C', normalizedInstallPath]
+      ? ['-xzf', normalizedArchivePath, '-C', normalizedInstallPath]
       : ['-xzf', archivePath, '-C', installPath];
 
     const tar = spawn('tar', args);

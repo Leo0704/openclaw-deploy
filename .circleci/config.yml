@@ -179,7 +179,7 @@ jobs:
             set "SCRIPT_DIR=%~dp0"
             set "NODE_DIR=%SCRIPT_DIR%node\"
             set "OPENCLAW_DIR=%SCRIPT_DIR%openclaw\"
-            set "PATH=%NODE_DIR%%PATH%"
+            set "PATH=%NODE_DIR%;%PATH%"
             cd /d "%OPENCLAW_DIR%"
             echo Starting OpenClaw...
             "%NODE_DIR%node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
@@ -191,6 +191,7 @@ jobs:
             "openclaw: ${OPENCLAW_VERSION}" | Out-File bundle/VERSION -Encoding utf8
             "node: 22.14.0" | Add-Content bundle/VERSION
             "platform: win-x64" | Add-Content bundle/VERSION
+            "build_date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Add-Content bundle/VERSION
       - run:
           name: Create archive
           command: |
@@ -255,6 +256,7 @@ jobs:
             echo "openclaw: ${OPENCLAW_VERSION}" > bundle/VERSION
             echo "node: 22.14.0" >> bundle/VERSION
             echo "platform: macos-arm64" >> bundle/VERSION
+            echo "build_date: $(date '+%Y-%m-%d %H:%M:%S')" >> bundle/VERSION
       - run:
           name: Create archive
           command: |
@@ -314,6 +316,7 @@ jobs:
             echo "openclaw: ${OPENCLAW_VERSION}" > bundle/VERSION
             echo "node: 22.14.0" >> bundle/VERSION
             echo "platform: linux-x64" >> bundle/VERSION
+            echo "build_date: $(date '+%Y-%m-%d %H:%M:%S')" >> bundle/VERSION
       - run:
           name: Create archive
           command: |

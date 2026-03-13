@@ -75,8 +75,9 @@ jobs:
       - name: Create bundle
         run: |
           New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
-          # 用 tar 管道流式处理，比 robocopy 复制几十万个小文件快得多
-          tar -cf - -C openclaw . | tar -xf - -C bundle/openclaw
+          # 用 robocopy /SL 排除符号链接，解决循环嵌套问题
+          robocopy openclaw bundle/openclaw /E /XD .git /SL /NFL /NDL /NJH /NJS /R:3 /W:5
+          if ($LASTEXITCODE -ge 8) { exit 1 }
 
       - name: Create start.bat
         run: |

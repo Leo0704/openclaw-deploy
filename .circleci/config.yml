@@ -241,7 +241,7 @@ jobs:
       - run:
           name: Create start.sh
           command: |
-            cat > bundle/start.sh <<'EOF'
+            cat > bundle/start.sh \<<'EOF'
             #!/bin/bash
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
             export PATH="$SCRIPT_DIR/node/bin:$PATH"
@@ -301,7 +301,7 @@ jobs:
       - run:
           name: Create start.sh
           command: |
-            cat > bundle/start.sh <<'EOF'
+            cat > bundle/start.sh \<<'EOF'
             #!/bin/bash
             SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
             export PATH="$SCRIPT_DIR/node/bin:$PATH"

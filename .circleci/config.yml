@@ -144,7 +144,7 @@ jobs:
           name: Setup Node.js & pnpm
           command: |
             choco install nodejs --version=22.14.0 -y
-            npm install -g pnpm
+            npm exec --yes pnpm@10
       - run:
           name: Clone OpenClaw
           command: |
@@ -219,7 +219,7 @@ jobs:
             # macOS 使用 Homebrew 安装
             brew install node@22
             brew link node@22 --force
-            npm install -g pnpm@10
+            npm exec --yes pnpm@10
       - run:
           name: Clone OpenClaw
           command: |
@@ -336,17 +336,53 @@ jobs:
 workflows:
   version: 2
 
-  # 构建 Lobster Assistant
+  # 构建 Lobster Assistant - 只在 tag 时触发
   build-lobster:
     jobs:
-      - build-lobster-macos-arm64
-      - build-lobster-macos-x64
-      - build-lobster-linux
-      - build-lobster-windows
+      - build-lobster-macos-arm64:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      - build-lobster-macos-x64:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      - build-lobster-linux:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      - build-lobster-windows:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
 
   # 构建 OpenClaw 离线包
+  # 构建 OpenClaw 离线包 - 只在 tag 时触发
   build-openclaw-bundle:
     jobs:
-      - build-openclaw-win
-      - build-openclaw-macos
-      - build-openclaw-linux
+      - build-openclaw-win:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      - build-openclaw-macos:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/
+      - build-openclaw-linux:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+            branches:
+              ignore: /.*/

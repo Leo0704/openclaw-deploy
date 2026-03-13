@@ -227,12 +227,14 @@ jobs:
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
-        shell: powershell
+        shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
-          Compress-Archive -Path "bundle\*" -DestinationPath "openclaw-${PLATFORM}-${VERSION}.zip" -Force
+          # Windows 上使用 tar 打包（避免 zip 的 2GB 限制）
+          cd bundle
+          tar -czvf "../openclaw-${PLATFORM}-${VERSION}.tar.gz" *
 
       - name: Create archive (Unix)
         if: runner.os != 'Windows'
@@ -287,7 +289,7 @@ jobs:
 
           | 平台 | 文件 |
           |------|------|
-          | Windows x64 | \`openclaw-win-x64-${VERSION}.zip\` |
+          | Windows x64 | \`openclaw-win-x64-${VERSION}.tar.gz\` |
           | macOS ARM64 (M1/M2/M3) | \`openclaw-macos-arm64-${VERSION}.tar.gz\` |
           | Linux x64 | \`openclaw-linux-x64-${VERSION}.tar.gz\` |
 

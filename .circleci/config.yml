@@ -6,7 +6,7 @@ version: 2.1
 # 环境变量
 environment:
   NODE_VERSION: "22.14.0"  # 统一版本
-  OPENCLAW_VERSION: "2026.3.8"
+  OPENCLAW_VERSION: "2026.3.11"
 
 # 定义可复用的命令
 commands:
@@ -194,11 +194,13 @@ jobs:
       - run:
           name: Create archive
           command: |
-            Compress-Archive -Path "bundle\*" -DestinationPath "openclaw-win-x64-${OPENCLAW_VERSION}.zip" -Force
+            # Windows 上使用 tar 打包（避免 zip 的 2GB 限制）
+            cd bundle
+            tar -czvf "../openclaw-win-x64-${OPENCLAW_VERSION}.tar.gz" *
       - persist_to_workspace:
           root: .
           paths:
-            - openclaw-win-x64-*.zip
+            - openclaw-win-x64-*.tar.gz
 
   build-openclaw-macos:
     macos:

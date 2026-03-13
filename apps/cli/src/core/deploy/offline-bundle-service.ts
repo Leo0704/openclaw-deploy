@@ -17,7 +17,7 @@ const OFFLINE_BUNDLE_URLS: Record<string, string> = {
 };
 
 // 默认版本（当无法从已安装包读取时使用）
-const DEFAULT_BUNDLE_VERSION = '2026.3.8';
+const DEFAULT_BUNDLE_VERSION = '2026.3.11';
 
 /**
  * 从已安装的离线包读取版本信息
@@ -91,13 +91,13 @@ export function getOfflineBundleInfo(customUrl?: string, installPath?: string): 
   }
 
   const downloadUrl = template.replace('{VERSION}', bundleVersion);
-  const ext = platform === 'win-x64' ? '.zip' : '.tar.gz';
+  const ext = '.tar.gz'; // 统一使用 tar.gz 格式（避免 zip 2GB 限制）
   const fileName = `openclaw-${platform}-${bundleVersion}${ext}`;
 
   return {
     version: bundleVersion,
     platform,
-    nodeVersion: '22.12.0',
+    nodeVersion: '22.14.0',
     downloadUrl,
     fileName,
   };
@@ -196,13 +196,9 @@ export function validateBundleFile(filePath: string, bundleInfo: OfflineBundleIn
       return { valid: false, error: '文件太小，可能下载不完整' };
     }
 
-    // 检查文件扩展名
-    const ext = path.extname(filePath);
-    const platform = getPlatform();
-    const expectedExt = platform === 'win-x64' ? '.zip' : '.gz';
-
-    if (ext !== expectedExt && !filePath.endsWith('.tar.gz')) {
-      return { valid: false, error: `文件格式不正确，期望 ${expectedExt}` };
+    // 检查文件扩展名（统一使用 tar.gz）
+    if (!filePath.endsWith('.tar.gz')) {
+      return { valid: false, error: '文件格式不正确，期望 .tar.gz' };
     }
 
     return { valid: true };
@@ -338,10 +334,11 @@ export async function extractBundle(
 
     let extractResult: { success: boolean; error?: string };
 
-    if (platform === 'win-x64') {
-      extractResult = await extractZip(archivePath, installPath, addLog);
-    } else {
+    // 按文件扩展名选择解压方式（统一使用 tar.gz 后不再区分平台）
+    if (archivePath.endsWith('.tar.gz')) {
       extractResult = await extractTarGz(archivePath, installPath, addLog);
+    } else {
+      extractResult = await extractZip(archivePath, installPath, addLog);
     }
 
     if (!extractResult.success) {
@@ -416,7 +413,7 @@ async function extractZip(
 }
 
 /**
- * 解压 tar.gz（Unix）
+ * 解压 tar.gz（支持 Windows 和 Unix）
  */
 async function extractTarGz(
   archivePath: string,
@@ -424,10 +421,22 @@ async function extractTarGz(
   addLog: (message: string, level?: 'info' | 'success' | 'error' | 'warning') => void
 ): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
-    const tar = spawn('tar', ['-xzf', archivePath, '-C', installPath]);
+    // Windows tar 需要特殊处理
+    const isWindows = process.platform === 'win32';
+
+    // 处理路径中的反斜杠和冒号
+    const normalizedArchivePath = isWindows ? archivePath.replace(/\\/g, '/') : archivePath;
+    const normalizedInstallPath = isWindows ? installPath.replace(/\\/g, '/') : installPath;
+
+    const args = isWindows
+      ? ['--force-local', '-xzf', normalizedArchivePath, '-C', normalizedInstallPath]
+      : ['-xzf', archivePath, '-C', installPath];
+
+    const tar = spawn('tar', args);
 
     tar.on('close', (code: number) => {
-      if (code === 0) {
+      // Windows tar 退出码 1 也可能表示成功（带警告）
+      if (code === 0 || (isWindows && code === 1)) {
         normalizeExtractedStructure(installPath);
         resolve({ success: true });
       } else {
@@ -448,12 +457,12 @@ async function extractTarGz(
 function normalizeExtractedStructure(installPath: string): void {
   const entries = fs.readdirSync(installPath);
 
-  // 如果只有一个目录且名为 openclaw-xxx，则移动内容
+  // 如果只有一个目录且名为 openclaw-xxx 或 bundle，则移动内容
   if (entries.length === 1) {
     const entry = entries[0];
     const entryPath = path.join(installPath, entry);
 
-    if (fs.statSync(entryPath).isDirectory() && entry.startsWith('openclaw-')) {
+    if (fs.statSync(entryPath).isDirectory() && (entry.startsWith('openclaw-') || entry === 'bundle')) {
       const subEntries = fs.readdirSync(entryPath);
       for (const subEntry of subEntries) {
         fs.renameSync(

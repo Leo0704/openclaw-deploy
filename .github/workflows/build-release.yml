@@ -82,60 +82,34 @@ jobs:
           $maxAttempts = 2
           $timeoutMs = 900000
           $copySuccess = $false
-          $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { (Get-Location).Path }
+          $copyCommand = 'tar --exclude=.git --exclude=node_modules/openclaw -C openclaw -cf - . | tar -C bundle/openclaw -xf -'
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Write-Host "Create bundle attempt $attempt/$maxAttempts"
-            $archivePath = Join-Path $tempRoot ("openclaw-copy-{0}.tar" -f $attempt)
             if (Test-Path "bundle\openclaw") { Remove-Item -Recurse -Force "bundle\openclaw" }
-            if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
             New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
 
-            $tarCreate = Start-Process -FilePath tar -ArgumentList @(
-              '--exclude=.git',
-              '--exclude=node_modules/openclaw',
-              '-cf',
-              $archivePath,
-              '-C',
-              'openclaw',
-              '.'
+            $copyProc = Start-Process -FilePath 'pwsh' -ArgumentList @(
+              '-NoLogo',
+              '-NoProfile',
+              '-Command',
+              $copyCommand
             ) -PassThru -NoNewWindow
 
-            if (-not $tarCreate.WaitForExit($timeoutMs)) {
-              Write-Host "Create bundle timeout during archive creation after $($timeoutMs / 1000) seconds, killing tar..."
-              try { $tarCreate.Kill() } catch {}
-              if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
+            if (-not $copyProc.WaitForExit($timeoutMs)) {
+              Write-Host "Create bundle timeout after $($timeoutMs / 1000) seconds, killing stream copy..."
+              try { $copyProc.Kill() } catch {}
+              Get-ChildItem bundle/openclaw -Force | Select-Object -First 5
               continue
             }
 
-            if ($tarCreate.ExitCode -ne 0) {
-              Write-Host "Create bundle failed during archive creation with tar exit code $($tarCreate.ExitCode)"
-              if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
-              continue
-            }
-
-            $tarExtract = Start-Process -FilePath tar -ArgumentList @(
-              '-xf',
-              $archivePath,
-              '-C',
-              'bundle/openclaw'
-            ) -PassThru -NoNewWindow
-
-            if (-not $tarExtract.WaitForExit($timeoutMs)) {
-              Write-Host "Create bundle timeout during archive extraction after $($timeoutMs / 1000) seconds, killing tar..."
-              try { $tarExtract.Kill() } catch {}
-              if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
-              continue
-            }
-
-            if ($tarExtract.ExitCode -eq 0) {
-              Write-Host "Create bundle succeeded with tar archive/extract"
+            if ($copyProc.ExitCode -eq 0) {
+              Write-Host "Create bundle succeeded with tar stream copy"
               $copySuccess = $true
-              if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
               break
             }
 
-            Write-Host "Create bundle failed during archive extraction with tar exit code $($tarExtract.ExitCode)"
-            if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
+            Write-Host "Create bundle failed with stream copy exit code $($copyProc.ExitCode)"
+            Get-ChildItem bundle/openclaw -Force | Select-Object -First 5
           }
 
           if (-not $copySuccess) {

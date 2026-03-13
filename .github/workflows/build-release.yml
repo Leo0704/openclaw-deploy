@@ -82,9 +82,10 @@ jobs:
           $maxAttempts = 2
           $timeoutMs = 900000
           $copySuccess = $false
-          $archivePath = "openclaw-copy.tar"
+          $tempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { (Get-Location).Path }
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Write-Host "Create bundle attempt $attempt/$maxAttempts"
+            $archivePath = Join-Path $tempRoot ("openclaw-copy-{0}.tar" -f $attempt)
             if (Test-Path "bundle\openclaw") { Remove-Item -Recurse -Force "bundle\openclaw" }
             if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
             New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null

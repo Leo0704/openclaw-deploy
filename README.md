@@ -6,7 +6,7 @@
 
 ## 当前版本
 
-- `1.0.63`
+- `1.0.64`
 
 ## 主要功能
 
@@ -205,8 +205,8 @@ npm run pkg:mac-app
 发版由 Git tag 触发：
 
 ```bash
-git tag v1.0.63
-git push origin v1.0.63
+git tag v1.0.64
+git push origin v1.0.64
 ```
 
 GitHub Actions 会：

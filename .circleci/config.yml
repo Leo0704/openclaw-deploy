@@ -5,7 +5,7 @@ version: 2.1
 
 # 环境变量
 environment:
-  NODE_VERSION: "22.12.0"
+  NODE_VERSION: "22.14.0"  # 统一版本
   OPENCLAW_VERSION: "2026.3.8"
 
 # 定义可复用的命令
@@ -114,7 +114,7 @@ jobs:
       - run:
           name: Setup Node.js
           command: |
-            choco install nodejs --version=22.12.0 -y
+            choco install nodejs --version=22.14.0 -y
       - install-deps
       - build-typescript
       - run:

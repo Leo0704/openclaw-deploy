@@ -7,9 +7,12 @@ if [ "$#" -ne 3 ]; then
   exit 1
 fi
 
-BINARY_PATH="$1"
-APP_ZIP_PATH="$2"
+BINARY_PATH_INPUT="$1"
+APP_ZIP_PATH_INPUT="$2"
 VERSION="$3"
+
+BINARY_PATH="$(cd "$(dirname "${BINARY_PATH_INPUT}")" && pwd)/$(basename "${BINARY_PATH_INPUT}")"
+APP_ZIP_PATH="$(cd "$(dirname "${APP_ZIP_PATH_INPUT}")" && pwd)/$(basename "${APP_ZIP_PATH_INPUT}")"
 
 APP_NAME="Lobster Assistant.app"
 BUNDLE_ID="com.lobsterassistant.cli"

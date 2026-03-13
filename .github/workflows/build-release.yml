@@ -609,7 +609,7 @@ jobs:
       - name: Set release name
         id: release
         run: |
-          echo "tag_name=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          echo "tag_name=v${{ steps.version.outputs.LOBSTER_VERSION }}" >> $GITHUB_OUTPUT
 
       - name: Publish to GitHub Releases
         if: steps.check_artifacts.outputs.skip == 'false' && steps.collect_release_files.outputs.skip == 'false'
@@ -618,7 +618,7 @@ jobs:
           draft: false
           prerelease: false
           tag_name: ${{ steps.release.outputs.tag_name }}
-          name: "Build ${{ steps.version.outputs.LOBSTER_VERSION }}"
+          name: "v${{ steps.version.outputs.LOBSTER_VERSION }}"
           generate_release_notes: true
           repository: Leo0704/lobster-releases
           files: ${{ steps.collect_release_files.outputs.files }}

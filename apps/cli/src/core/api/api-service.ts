@@ -91,7 +91,8 @@ export function createApiHandlers(deps: ApiHandlerDeps) {
           return deps.getNotificationChannelsStatus(config);
 
         case 'channels/probe':
-          return { success: true, message: '渠道探测完成' };
+          // 真正的渠道探测：调用 Gateway API 探测渠道连通性
+          return deps.getNotificationChannelsStatus(config, { probe: true });
 
         case 'channels/save-telegram':
           return deps.handleSaveTelegramChannel(data, config);

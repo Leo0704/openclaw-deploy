@@ -279,15 +279,51 @@ export function checkDiskSpace(installPath: string): {
   error?: string;
 } {
   try {
-    // 简单检查：尝试创建测试文件
     const testDir = path.dirname(installPath);
     if (!fs.existsSync(testDir)) {
-      return { sufficient: true, required: MIN_DISK_SPACE };
+      // 目录不存在，尝试创建
+      fs.mkdirSync(testDir, { recursive: true });
     }
 
-    // 使用 df 命令（仅 Unix）或估算
-    // 这里简化处理，实际部署时如果空间不足会自然失败
-    return { sufficient: true, required: MIN_DISK_SPACE };
+    const isWindows = process.platform === 'win32';
+    let available = 0;
+
+    if (isWindows) {
+      // Windows: 使用 PowerShell 获取磁盘可用空间
+      const { execSync } = require('child_process') as typeof import('child_process');
+      const drive = testDir.substring(0, 2); // 如 "C:"
+      try {
+        const result = execSync(
+          `powershell -Command "(Get-PSDrive -Name '${drive.replace(':', '')}').Free"`,
+          { encoding: 'utf-8', timeout: 5000 }
+        );
+        available = parseInt(result.trim(), 10) || 0;
+      } catch {
+        // PowerShell 失败时返回 0，让后续检查处理
+        available = 0;
+      }
+    } else {
+      // Unix: 使用 df 获取磁盘可用空间
+      const { execSync } = require('child_process') as typeof import('child_process');
+      try {
+        const result = execSync(
+          `df -k "${testDir}" | tail -1 | awk '{print $4}'`,
+          { encoding: 'utf-8', timeout: 5000 }
+        );
+        // df 输出是 1K-blocks，转换为字节
+        available = (parseInt(result.trim(), 10) || 0) * 1024;
+      } catch {
+        available = 0;
+      }
+    }
+
+    const sufficient = available >= MIN_DISK_SPACE;
+    return {
+      sufficient,
+      available,
+      required: MIN_DISK_SPACE,
+      error: sufficient ? undefined : `磁盘空间不足，需要 ${Math.round(MIN_DISK_SPACE / 1024 / 1024)}MB，可用 ${Math.round(available / 1024 / 1024)}MB`,
+    };
   } catch (error) {
     return {
       sufficient: false,
@@ -344,7 +380,7 @@ export async function extractBundle(
     if (!extractResult.success) {
       // 解压失败，回滚
       addLog('解压失败，正在回滚...', 'warning');
-      rollbackInstall(installPath, backupPath, hasBackup);
+      rollbackInstall(installPath, backupPath, hasBackup, addLog);
       return extractResult;
     }
 
@@ -357,7 +393,7 @@ export async function extractBundle(
     return { success: true };
   } catch (error) {
     // 异常时回滚
-    rollbackInstall(installPath, backupPath, hasBackup);
+    rollbackInstall(installPath, backupPath, hasBackup, addLog);
     return {
       success: false,
       error: `解压失败: ${error instanceof Error ? error.message : '未知错误'}`,
@@ -368,16 +404,26 @@ export async function extractBundle(
 /**
  * 回滚安装
  */
-function rollbackInstall(installPath: string, backupPath: string, hasBackup: boolean): void {
+function rollbackInstall(
+  installPath: string,
+  backupPath: string,
+  hasBackup: boolean,
+  addLog?: (message: string, level?: 'info' | 'success' | 'error' | 'warning') => void
+): void {
   try {
     if (fs.existsSync(installPath)) {
+      addLog?.('清理损坏的安装目录...', 'warning');
       fs.rmSync(installPath, { recursive: true, force: true });
     }
     if (hasBackup && fs.existsSync(backupPath)) {
+      addLog?.('恢复备份...', 'info');
       fs.renameSync(backupPath, installPath);
+      addLog?.('已恢复备份', 'success');
     }
-  } catch {
-    // 忽略回滚失败
+  } catch (error) {
+    const msg = `回滚失败: ${error instanceof Error ? error.message : '未知错误'}，请手动检查 ${installPath} 目录状态`;
+    addLog?.(msg, 'error');
+    console.error('[回滚失败]', msg);
   }
 }
 
@@ -433,14 +479,34 @@ async function extractTarGz(
       : ['-xzf', archivePath, '-C', installPath];
 
     const tar = spawn('tar', args);
+    let stderr = '';
+
+    tar.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
 
     tar.on('close', (code: number) => {
-      // Windows tar 退出码 1 也可能表示成功（带警告）
-      if (code === 0 || (isWindows && code === 1)) {
+      // 优先检查关键文件是否存在，即使退出码为 1 也可能成功
+      const hasFiles = fs.existsSync(path.join(installPath, 'openclaw')) ||
+                       fs.existsSync(path.join(installPath, 'node')) ||
+                       fs.existsSync(path.join(installPath, 'VERSION'));
+
+      if (code === 0 || (isWindows && hasFiles)) {
+        // 即使退出码非零，如果文件存在也认为成功
         normalizeExtractedStructure(installPath);
+
+        // 检查是否真的有文件被解压出来
+        const finalFiles = fs.readdirSync(installPath);
+        if (finalFiles.length === 0) {
+          resolve({ success: false, error: '解压后目录为空，文件可能损坏' });
+          return;
+        }
+
         resolve({ success: true });
       } else {
-        resolve({ success: false, error: `解压失败，退出码: ${code}` });
+        // Windows 退出码非 0 且没有关键文件，才判定为失败
+        const errorMsg = stderr.trim() || `解压失败，退出码: ${code}`;
+        resolve({ success: false, error: errorMsg });
       }
     });
 

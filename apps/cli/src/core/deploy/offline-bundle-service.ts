@@ -16,8 +16,34 @@ const OFFLINE_BUNDLE_URLS: Record<string, string> = {
   'linux-x64': 'https://pan.quark.cn/s/6ca5581f1db9',
 };
 
-// 当前支持的版本
-const BUNDLE_VERSION = '2026.3.8';
+// 默认版本（当无法从已安装包读取时使用）
+const DEFAULT_BUNDLE_VERSION = '2026.3.8';
+
+/**
+ * 从已安装的离线包读取版本信息
+ * 这样版本号只需要在 CI 构建时维护
+ */
+function getInstalledBundleVersion(installPath?: string): string | null {
+  if (!installPath) {
+    // 尝试从默认安装路径读取
+    const homeDir = os.homedir();
+    installPath = path.join(homeDir, '.openclaw');
+  }
+
+  const versionFile = path.join(installPath, 'VERSION');
+  if (fs.existsSync(versionFile)) {
+    try {
+      const content = fs.readFileSync(versionFile, 'utf-8');
+      const match = content.match(/openclaw:\s*(.+)/);
+      if (match) {
+        return match[1].trim();
+      }
+    } catch {
+      // 忽略读取错误
+    }
+  }
+  return null;
+}
 
 // 最小磁盘空间要求 (500MB)
 const MIN_DISK_SPACE = 500 * 1024 * 1024;
@@ -48,21 +74,28 @@ export function getPlatform(): string {
 
 /**
  * 获取离线包下载信息
+ * 版本号优先从已安装的包读取（与 CI 构建版本保持一致）
  */
-export function getOfflineBundleInfo(customUrl?: string): OfflineBundleInfo {
+export function getOfflineBundleInfo(customUrl?: string, installPath?: string): OfflineBundleInfo {
   const platform = getPlatform();
+
+  // 优先从已安装的版本读取（CI 构建时会写入 VERSION 文件）
+  // 这样版本号只需要在 CI 构建时维护一处
+  const installedVersion = getInstalledBundleVersion(installPath);
+  const bundleVersion = installedVersion || DEFAULT_BUNDLE_VERSION;
+
   const template = customUrl || OFFLINE_BUNDLE_URLS[platform];
 
   if (!template) {
     throw new Error(`平台 ${platform} 没有配置下载链接`);
   }
 
-  const downloadUrl = template.replace('{VERSION}', BUNDLE_VERSION);
+  const downloadUrl = template.replace('{VERSION}', bundleVersion);
   const ext = platform === 'win-x64' ? '.zip' : '.tar.gz';
-  const fileName = `openclaw-${platform}-${BUNDLE_VERSION}${ext}`;
+  const fileName = `openclaw-${platform}-${bundleVersion}${ext}`;
 
   return {
-    version: BUNDLE_VERSION,
+    version: bundleVersion,
     platform,
     nodeVersion: '22.12.0',
     downloadUrl,
@@ -121,8 +154,9 @@ export function detectInstall(installPath: string): {
       if (match) version = match[1].trim();
     }
 
-    // 检查是否需要更新
-    const needUpdate = version !== BUNDLE_VERSION;
+    // 检查是否需要更新（优先使用已安装包记录的版本）
+    const currentVersion = getInstalledBundleVersion() || DEFAULT_BUNDLE_VERSION;
+    const needUpdate = version !== currentVersion;
 
     return {
       installed: true,
@@ -521,7 +555,7 @@ export function validateBundle(installPath: string): {
 }
 
 export const BUNDLE_CONFIG = {
-  version: BUNDLE_VERSION,
+  version: DEFAULT_BUNDLE_VERSION,
   downloadUrls: OFFLINE_BUNDLE_URLS,
   minDiskSpace: MIN_DISK_SPACE,
 };

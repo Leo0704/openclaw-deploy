@@ -1,0 +1,355 @@
+# CircleCI 配置
+# 用于构建 Lobster Assistant 和 OpenClaw 离线包
+
+version: 2.1
+
+# 环境变量
+environment:
+  NODE_VERSION: "22.12.0"
+  OPENCLAW_VERSION: "2026.3.8"
+
+# 定义可复用的命令
+commands:
+  install-deps:
+    description: "安装 Node.js 依赖"
+    steps:
+      - restore_cache:
+          keys:
+            - v1-deps-{{ .Environment.CIRCLE_JOB }}-{{ checksum "apps/cli/package-lock.json" }}
+            - v1-deps-{{ .Environment.CIRCLE_JOB }}-
+      - run:
+          name: Install dependencies
+          command: cd apps/cli && npm install
+      - save_cache:
+          key: v1-deps-{{ .Environment.CIRCLE_JOB }}-{{ checksum "apps/cli/package-lock.json" }}
+          paths:
+            - apps/cli/node_modules
+
+  build-typescript:
+    description: "编译 TypeScript"
+    steps:
+      - run:
+          name: Build TypeScript
+          command: cd apps/cli && npm run build
+
+  build-macos-app:
+    description: "生成 macOS App Bundle"
+    steps:
+      - run:
+          name: Build macOS App Bundle
+          command: |
+            VERSION=$(node -p "require('./apps/cli/package.json').version")
+            chmod +x scripts/build-macos-app.sh
+            scripts/build-macos-app.sh \
+              "apps/cli/bin/$1" \
+              "apps/cli/bin/$2" \
+              "${VERSION}"
+          environment:
+            PARAM_ASSET_NAME: ""
+            PARAM_APP_ZIP: ""
+
+# 定义 jobs
+jobs:
+  # ============================================
+  # 构建 Lobster Assistant (跨平台打包)
+  # ============================================
+
+  build-lobster-macos-arm64:
+    macos:
+      xcode: "15.0"
+    steps:
+      - checkout
+      - install-deps
+      - build-typescript
+      - run:
+          name: Build binary
+          command: |
+            cd apps/cli
+            npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64
+      - run:
+          name: Build App Bundle
+          command: |
+            VERSION=$(node -p "require('./package.json').version")
+            chmod +x ../scripts/build-macos-app.sh
+            ../scripts/build-macos-app.sh bin/lobster-macos-arm64 bin/lobster-macos-arm64-app.zip "${VERSION}"
+      - persist_to_workspace:
+          root: apps/cli/bin
+          paths:
+            - lobster-macos-arm64
+            - lobster-macos-arm64-app.zip
+
+  build-lobster-macos-x64:
+    macos:
+      xcode: "15.0"
+    steps:
+      - checkout
+      - install-deps
+      - build-typescript
+      - run:
+          name: Build binary
+          command: |
+            cd apps/cli
+            npx @yao-pkg/pkg dist/index.js --targets node22-macos-x64 --output bin/lobster-macos-x64
+      - run:
+          name: Build App Bundle
+          command: |
+            VERSION=$(node -p "require('./package.json').version")
+            chmod +x ../scripts/build-macos-app.sh
+            ../scripts/build-macos-app.sh bin/lobster-macos-x64 bin/lobster-macos-x64-app.zip "${VERSION}"
+      - persist_to_workspace:
+          root: apps/cli/bin
+          paths:
+            - lobster-macos-x64
+            - lobster-macos-x64-app.zip
+
+  build-lobster-linux:
+    docker:
+      - image: cimg/node:22.12
+    steps:
+      - checkout
+      - install-deps
+      - build-typescript
+      - run:
+          name: Build binary
+          command: |
+            cd apps/cli
+            npx @yao-pkg/pkg dist/index.js --targets node22-linux-x64 --output bin/lobster-linux-x64
+            chmod +x bin/lobster-linux-x64
+      - persist_to_workspace:
+          root: apps/cli/bin
+          paths:
+            - lobster-linux-x64
+
+  build-lobster-windows:
+    docker:
+      - image: cimg/windows:vs2022
+    steps:
+      - checkout
+      - run:
+          name: Setup Node.js
+          command: |
+            choco install nodejs --version=22.12.0 -y
+      - install-deps
+      - build-typescript
+      - run:
+          name: Build binary
+          command: |
+            cd apps/cli
+            npx @yao-pkg/pkg dist/index.js --targets node22-win-x64 --output bin/lobster-win-x64.exe
+      - persist_to_workspace:
+          root: apps/cli/bin
+          paths:
+            - lobster-win-x64.exe
+
+  # ============================================
+  # 构建 OpenClaw 离线包
+  # ============================================
+
+  build-openclaw-win:
+    docker:
+      - image: cimg/windows:vs2022
+    steps:
+      - checkout
+      - run:
+          name: Setup Node.js & pnpm
+          command: |
+            choco install nodejs --version=22.14.0 -y
+            npm install -g pnpm
+      - run:
+          name: Clone OpenClaw
+          command: |
+            git clone --depth 1 --branch v${OPENCLAW_VERSION} https://github.com/openclaw/openclaw.git openclaw || \
+            git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw
+      - run:
+          name: Install & Build OpenClaw
+          command: |
+            cd openclaw
+            pnpm install --frozen-lockfile || pnpm install
+            pnpm build
+      - run:
+          name: Download Node.js
+          command: |
+            choco install nodejs --version=22.14.0 -y
+      - run:
+          name: Create bundle
+          command: |
+            mkdir bundle/openclaw
+            mkdir bundle/node
+            # 复制 OpenClaw (排除 .git)
+            Get-ChildItem -Path openclaw -Recurse -File | Where-Object { $_.FullName -notmatch '\.git' } | ForEach-Object {
+              $dest = $_.FullName -replace '.*\\openclaw\\', 'bundle\openclaw\'
+              New-Item -ItemType File -Path (Split-Path $dest) -Force | Out-Null
+              Copy-Item $_.FullName -Destination $dest -Force
+            }
+            # 复制 Node.js
+            Copy-Item -Path "C:\Program Files\nodejs\*" -Destination "bundle\node\" -Recurse -Force
+      - run:
+          name: Create start.bat
+          command: |
+            $batContent = @"
+            @echo off
+            chcp 65001 >nul
+            setlocal
+            set "SCRIPT_DIR=%~dp0"
+            set "NODE_DIR=%SCRIPT_DIR%node\"
+            set "OPENCLAW_DIR=%SCRIPT_DIR%openclaw\"
+            set "PATH=%NODE_DIR%%PATH%"
+            cd /d "%OPENCLAW_DIR%"
+            echo Starting OpenClaw...
+            "%NODE_DIR%node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
+            "@
+            $batContent | Out-File -FilePath bundle/start.bat -Encoding utf8BOM
+      - run:
+          name: Create VERSION file
+          command: |
+            "openclaw: ${OPENCLAW_VERSION}" | Out-File bundle/VERSION -Encoding utf8
+            "node: 22.14.0" | Add-Content bundle/VERSION
+            "platform: win-x64" | Add-Content bundle/VERSION
+      - run:
+          name: Create archive
+          command: |
+            Compress-Archive -Path "bundle\*" -DestinationPath "openclaw-win-x64-${OPENCLAW_VERSION}.zip" -Force
+      - persist_to_workspace:
+          root: .
+          paths:
+            - openclaw-win-x64-*.zip
+
+  build-openclaw-macos:
+    macos:
+      xcode: "15.0"
+    steps:
+      - checkout
+      - run:
+          name: Setup Node.js & pnpm
+          command: |
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash
+            sudo apt-get install -y nodejs
+            npm install -g pnpm@10
+      - run:
+          name: Clone OpenClaw
+          command: |
+            git clone --depth 1 --branch v${OPENCLAW_VERSION} https://github.com/openclaw/openclaw.git openclaw || \
+            git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw
+      - run:
+          name: Install & Build OpenClaw
+          command: |
+            cd openclaw
+            pnpm install --frozen-lockfile || pnpm install
+            pnpm build
+      - run:
+          name: Download Node.js
+          command: |
+            curl -LO https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz
+            tar -xzf node-v22.14.0-darwin-arm64.tar.gz
+            mkdir -p bundle/node
+            mv node-v22.14.0-darwin-arm64/* bundle/node/
+      - run:
+          name: Create bundle
+          command: |
+            mkdir -p bundle/openclaw
+            rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+      - run:
+          name: Create start.sh
+          command: |
+            cat > bundle/start.sh << 'EOF'
+            #!/bin/bash
+            SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+            export PATH="$SCRIPT_DIR/node/bin:$PATH"
+            cd "$SCRIPT_DIR/openclaw"
+            echo "Starting OpenClaw..."
+            "$SCRIPT_DIR/node/bin/node" openclaw.mjs gateway run --port 18789 --allow-unconfigured "$@"
+            EOF
+            chmod +x bundle/start.sh
+      - run:
+          name: Create VERSION file
+          command: |
+            echo "openclaw: ${OPENCLAW_VERSION}" > bundle/VERSION
+            echo "node: 22.14.0" >> bundle/VERSION
+            echo "platform: macos-arm64" >> bundle/VERSION
+      - run:
+          name: Create archive
+          command: |
+            cd bundle
+            tar -czvf ../openclaw-macos-arm64-${OPENCLAW_VERSION}.tar.gz *
+      - persist_to_workspace:
+          root: .
+          paths:
+            - openclaw-macos-arm64-*.tar.gz
+
+  build-openclaw-linux:
+    docker:
+      - image: cimg/node:22.14
+    steps:
+      - checkout
+      - run:
+          name: Setup pnpm
+          command: npm install -g pnpm@10
+      - run:
+          name: Clone OpenClaw
+          command: |
+            git clone --depth 1 --branch v${OPENCLAW_VERSION} https://github.com/openclaw/openclaw.git openclaw || \
+            git clone --depth 1 https://github.com/openclaw/openclaw.git openclaw
+      - run:
+          name: Install & Build OpenClaw
+          command: |
+            cd openclaw
+            pnpm install --frozen-lockfile || pnpm install
+            pnpm build
+      - run:
+          name: Download Node.js
+          command: |
+            curl -LO https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.gz
+            tar -xzf node-v22.14.0-linux-x64.tar.gz
+            mkdir -p bundle/node
+            mv node-v22.14.0-linux-x64/* bundle/node/
+      - run:
+          name: Create bundle
+          command: |
+            mkdir -p bundle/openclaw
+            rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+      - run:
+          name: Create start.sh
+          command: |
+            cat > bundle/start.sh << 'EOF'
+            #!/bin/bash
+            SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+            export PATH="$SCRIPT_DIR/node/bin:$PATH"
+            cd "$SCRIPT_DIR/openclaw"
+            echo "Starting OpenClaw..."
+            "$SCRIPT_DIR/node/bin/node" openclaw.mjs gateway run --port 18789 --allow-unconfigured "$@"
+            EOF
+            chmod +x bundle/start.sh
+      - run:
+          name: Create VERSION file
+          command: |
+            echo "openclaw: ${OPENCLAW_VERSION}" > bundle/VERSION
+            echo "node: 22.14.0" >> bundle/VERSION
+            echo "platform: linux-x64" >> bundle/VERSION
+      - run:
+          name: Create archive
+          command: |
+            cd bundle
+            tar -czvf ../openclaw-linux-x64-${OPENCLAW_VERSION}.tar.gz *
+      - persist_to_workspace:
+          root: .
+          paths:
+            - openclaw-linux-x64-*.tar.gz
+
+# 定义 workflows
+workflows:
+  version: 2
+
+  # 构建 Lobster Assistant
+  build-lobster:
+    jobs:
+      - build-lobster-macos-arm64
+      - build-lobster-macos-x64
+      - build-lobster-linux
+      - build-lobster-windows
+
+  # 构建 OpenClaw 离线包
+  build-openclaw-bundle:
+    jobs:
+      - build-openclaw-win
+      - build-openclaw-macos
+      - build-openclaw-linux

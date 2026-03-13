@@ -181,13 +181,14 @@ jobs:
           chcp 65001 >nul
           setlocal
           set "SCRIPT_DIR=%~dp0"
-          set "NODE_PATH=%SCRIPT_DIR%node"
-          set "PATH=%NODE_PATH%;%PATH%"
-          cd /d "%SCRIPT_DIR%openclaw"
+          set "NODE_DIR=%SCRIPT_DIR%node\"
+          set "OPENCLAW_DIR=%SCRIPT_DIR%openclaw\"
+          set "PATH=%NODE_DIR%%PATH%"
+          cd /d "%OPENCLAW_DIR%"
           echo Starting OpenClaw...
-          "%SCRIPT_DIR%node\node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
+          "%NODE_DIR%node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
           "@
-          $batContent | Out-File -FilePath bundle/start.bat -Encoding utf8
+          $batContent | Out-File -FilePath bundle/start.bat -Encoding utf8BOM
 
           # 创建版本文件
           "openclaw: ${VERSION}" | Out-File -FilePath bundle/VERSION -Encoding utf8

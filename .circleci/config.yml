@@ -43,7 +43,6 @@ jobs:
   build-lobster-macos-arm64:
     macos:
       xcode: "15.0"
-      resource_class: medium
     steps:
       - checkout
       - install-deps
@@ -64,31 +63,6 @@ jobs:
           paths:
             - lobster-macos-arm64
             - lobster-macos-arm64-app.zip
-
-  build-lobster-macos-x64:
-    macos:
-      xcode: "15.0"
-      resource_class: medium
-    steps:
-      - checkout
-      - install-deps
-      - build-typescript
-      - run:
-          name: Build binary
-          command: |
-            cd apps/cli
-            npx @yao-pkg/pkg dist/index.js --targets node22-macos-x64 --output bin/lobster-macos-x64
-      - run:
-          name: Build App Bundle
-          command: |
-            VERSION=$(node -p "require('./package.json').version")
-            chmod +x ../scripts/build-macos-app.sh
-            ../scripts/build-macos-app.sh bin/lobster-macos-x64 bin/lobster-macos-x64-app.zip "${VERSION}"
-      - persist_to_workspace:
-          root: apps/cli/bin
-          paths:
-            - lobster-macos-x64
-            - lobster-macos-x64-app.zip
 
   build-lobster-linux:
     docker:
@@ -111,7 +85,6 @@ jobs:
   build-lobster-windows:
     machine:
       image: windows-server-2022
-      resource_class: windows.medium
     steps:
       - checkout
       - run:
@@ -137,7 +110,6 @@ jobs:
   build-openclaw-win:
     machine:
       image: windows-server-2022
-      resource_class: windows.medium
     steps:
       - checkout
       - run:
@@ -210,7 +182,6 @@ jobs:
   build-openclaw-macos:
     macos:
       xcode: "15.0"
-      resource_class: medium
     steps:
       - checkout
       - run:
@@ -340,12 +311,6 @@ workflows:
   build-lobster:
     jobs:
       - build-lobster-macos-arm64:
-          filters:
-            tags:
-              only: /^v\d+\.\d+\.\d+$/
-            branches:
-              ignore: /.*/
-      - build-lobster-macos-x64:
           filters:
             tags:
               only: /^v\d+\.\d+\.\d+$/

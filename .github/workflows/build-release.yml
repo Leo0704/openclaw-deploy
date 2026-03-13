@@ -75,7 +75,7 @@ jobs:
       - name: Create bundle
         run: |
           New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
-          robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS
+          robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS /MT:8 /R:3
           if ($LASTEXITCODE -ge 8) { exit 1 }
 
       - name: Create start.bat

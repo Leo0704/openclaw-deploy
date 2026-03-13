@@ -43,7 +43,7 @@ jobs:
   build-lobster-macos-arm64:
     macos:
       xcode: "15.0"
-    resource_class: medium
+      resource_class: medium
     steps:
       - checkout
       - install-deps
@@ -68,7 +68,7 @@ jobs:
   build-lobster-macos-x64:
     macos:
       xcode: "15.0"
-    resource_class: medium
+      resource_class: medium
     steps:
       - checkout
       - install-deps
@@ -210,7 +210,7 @@ jobs:
   build-openclaw-macos:
     macos:
       xcode: "15.0"
-    resource_class: medium
+      resource_class: medium
     steps:
       - checkout
       - run:

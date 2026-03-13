@@ -342,7 +342,7 @@ jobs:
 
       - name: Get Lobster version
         id: version
-        run: echo "LOBSTER_VERSION=$(node -p \"require('./apps/cli/package.json').version\")" >> $GITHUB_OUTPUT
+        run: echo "LOBSTER_VERSION=$(node -p 'require(\"./apps/cli/package.json\").version')" >> $GITHUB_OUTPUT
 
       - name: Build macOS app
         run: |
@@ -446,7 +446,7 @@ jobs:
 
       - name: Get Lobster version
         id: version
-        run: echo "LOBSTER_VERSION=$(node -p \"require('./apps/cli/package.json').version\")" >> $GITHUB_OUTPUT
+        run: echo "LOBSTER_VERSION=$(node -p 'require(\"./apps/cli/package.json\").version')" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

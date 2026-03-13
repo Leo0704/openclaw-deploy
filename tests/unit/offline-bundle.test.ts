@@ -71,6 +71,9 @@ describe('离线包信息生成', () => {
   function getOfflineBundleInfo(customUrl?: string) {
     const platform = getPlatform();
     const template = customUrl || OFFLINE_BUNDLE_URLS[platform];
+    if (!template) {
+      throw new Error(`平台 ${platform} 没有配置下载链接`);
+    }
     const downloadUrl = template.replace('{VERSION}', BUNDLE_VERSION);
     const ext = '.tar.gz';
     const fileName = `openclaw-${platform}-${BUNDLE_VERSION}${ext}`;

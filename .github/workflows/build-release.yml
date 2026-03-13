@@ -82,7 +82,7 @@ jobs:
           $maxAttempts = 2
           $timeoutMs = 900000
           $copySuccess = $false
-          $copyCommand = 'tar --exclude=.git --exclude=node_modules/openclaw -C openclaw -cf - . | tar -C bundle/openclaw -xf -'
+          $copyCommand = 'tar -h --exclude=.git --exclude=node_modules/openclaw -C openclaw -cf - . | tar -C bundle/openclaw -xf -'
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Write-Host "Create bundle attempt $attempt/$maxAttempts"
             if (Test-Path "bundle\openclaw") { Remove-Item -Recurse -Force "bundle\openclaw" }

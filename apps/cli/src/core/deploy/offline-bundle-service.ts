@@ -196,9 +196,9 @@ export function validateBundleFile(filePath: string, bundleInfo: OfflineBundleIn
       return { valid: false, error: '文件太小，可能下载不完整' };
     }
 
-    // 检查文件扩展名（统一使用 tar.gz）
-    if (!filePath.endsWith('.tar.gz')) {
-      return { valid: false, error: '文件格式不正确，期望 .tar.gz' };
+    const lowerPath = filePath.toLowerCase();
+    if (!lowerPath.endsWith('.tar.gz') && !lowerPath.endsWith('.zip')) {
+      return { valid: false, error: '文件格式不正确，期望 .tar.gz 或 .zip' };
     }
 
     return { valid: true };
@@ -223,38 +223,73 @@ export function detectDownloadedBundle(bundleInfo: OfflineBundleInfo): {
   const platform = os.platform();
   const homeDir = os.homedir();
   const fileName = bundleInfo.fileName;
-
+  const altFileNames = Array.from(new Set([
+    fileName,
+    fileName.replace(/\.tar\.gz$/i, '.zip'),
+    `openclaw-${bundleInfo.platform}.zip`,
+    `openclaw-${bundleInfo.platform}.tar.gz`,
+  ]));
   const searchPaths: string[] = [];
+  const searchDirs: string[] = [];
 
   // 1. 龙虾助手可执行文件同目录及子目录（最高优先级）
   // 这是用户从网盘下载的"龙虾助手+离线包"文件夹的场景
   const execDir = path.dirname(process.execPath);
-  searchPaths.push(
-    path.join(execDir, fileName),                           // 同目录
-    path.join(execDir, 'bundle', fileName),                 // bundle/ 子目录
-    path.join(execDir, 'openclaw-bundle', fileName),        // openclaw-bundle/ 子目录
-    path.join(execDir, '..', fileName),                     // 上级目录（开发模式）
-    path.join(execDir, '..', 'bundle', fileName),           // 上级 bundle/ 目录
+  searchDirs.push(
+    execDir,
+    path.join(execDir, 'bundle'),
+    path.join(execDir, 'openclaw-bundle'),
+    path.join(execDir, '..'),
+    path.join(execDir, '..', 'bundle'),
   );
+  for (const name of altFileNames) {
+    searchPaths.push(
+      path.join(execDir, name),                           // 同目录
+      path.join(execDir, 'bundle', name),                 // bundle/ 子目录
+      path.join(execDir, 'openclaw-bundle', name),        // openclaw-bundle/ 子目录
+      path.join(execDir, '..', name),                     // 上级目录（开发模式）
+      path.join(execDir, '..', 'bundle', name),           // 上级 bundle/ 目录
+    );
+  }
 
   // 2. 常见下载目录
   if (platform === 'win32') {
-    searchPaths.push(
-      path.join(homeDir, 'Downloads', fileName),
-      path.join(homeDir, 'downloads', fileName),
-      path.join(homeDir, 'Desktop', fileName),
-      path.join(homeDir, '桌面', fileName),
+    searchDirs.push(
+      path.join(homeDir, 'Downloads'),
+      path.join(homeDir, 'downloads'),
+      path.join(homeDir, 'Desktop'),
+      path.join(homeDir, '桌面'),
     );
+    for (const name of altFileNames) {
+      searchPaths.push(
+        path.join(homeDir, 'Downloads', name),
+        path.join(homeDir, 'downloads', name),
+        path.join(homeDir, 'Desktop', name),
+        path.join(homeDir, '桌面', name),
+      );
+    }
   } else if (platform === 'darwin') {
-    searchPaths.push(
-      path.join(homeDir, 'Downloads', fileName),
-      path.join(homeDir, 'Desktop', fileName),
+    searchDirs.push(
+      path.join(homeDir, 'Downloads'),
+      path.join(homeDir, 'Desktop'),
     );
+    for (const name of altFileNames) {
+      searchPaths.push(
+        path.join(homeDir, 'Downloads', name),
+        path.join(homeDir, 'Desktop', name),
+      );
+    }
   } else {
-    searchPaths.push(
-      path.join(homeDir, 'Downloads', fileName),
-      path.join(homeDir, fileName),
+    searchDirs.push(
+      path.join(homeDir, 'Downloads'),
+      homeDir,
     );
+    for (const name of altFileNames) {
+      searchPaths.push(
+        path.join(homeDir, 'Downloads', name),
+        path.join(homeDir, name),
+      );
+    }
   }
 
   for (const searchPath of searchPaths) {
@@ -263,6 +298,55 @@ export function detectDownloadedBundle(bundleInfo: OfflineBundleInfo): {
       if (validation.valid) {
         return { found: true, path: searchPath };
       }
+    }
+  }
+
+  const exactPrefix = `openclaw-${bundleInfo.platform}-`;
+  const fallbackCandidates: string[] = [];
+  const visitedDirs = new Set<string>();
+  for (const dir of searchDirs) {
+    const normalizedDir = path.resolve(dir);
+    if (visitedDirs.has(normalizedDir)) {
+      continue;
+    }
+    visitedDirs.add(normalizedDir);
+    if (!fs.existsSync(normalizedDir) || !fs.statSync(normalizedDir).isDirectory()) {
+      continue;
+    }
+    let entries: string[] = [];
+    try {
+      entries = fs.readdirSync(normalizedDir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const lower = entry.toLowerCase();
+      if (!lower.endsWith('.tar.gz') && !lower.endsWith('.zip')) {
+        continue;
+      }
+      if (!lower.startsWith('openclaw-') && !lower.includes('offline')) {
+        continue;
+      }
+      fallbackCandidates.push(path.join(normalizedDir, entry));
+    }
+  }
+
+  fallbackCandidates.sort((a, b) => {
+    const aName = path.basename(a).toLowerCase();
+    const bName = path.basename(b).toLowerCase();
+    const aScore = Number(aName.startsWith(exactPrefix)) * 4
+      + Number(aName.includes(bundleInfo.version)) * 2
+      + Number(aName.includes(bundleInfo.platform));
+    const bScore = Number(bName.startsWith(exactPrefix)) * 4
+      + Number(bName.includes(bundleInfo.version)) * 2
+      + Number(bName.includes(bundleInfo.platform));
+    return bScore - aScore;
+  });
+
+  for (const candidate of fallbackCandidates) {
+    const validation = validateBundleFile(candidate, bundleInfo);
+    if (validation.valid) {
+      return { found: true, path: candidate };
     }
   }
 

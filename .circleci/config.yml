@@ -32,21 +32,7 @@ commands:
           name: Build TypeScript
           command: cd apps/cli && npm run build
 
-  build-macos-app:
-    description: "生成 macOS App Bundle"
-    steps:
-      - run:
-          name: Build macOS App Bundle
-          command: |
-            VERSION=$(node -p "require('./apps/cli/package.json').version")
-            chmod +x scripts/build-macos-app.sh
-            scripts/build-macos-app.sh \
-              "apps/cli/bin/$1" \
-              "apps/cli/bin/$2" \
-              "${VERSION}"
-          environment:
-            PARAM_ASSET_NAME: ""
-            PARAM_APP_ZIP: ""
+  # build-macos-app 命令已废弃，直接在 job 内调用
 
 # 定义 jobs
 jobs:
@@ -104,7 +90,7 @@ jobs:
 
   build-lobster-linux:
     docker:
-      - image: cimg/node:22.12
+      - image: cimg/node:22.14
     steps:
       - checkout
       - install-deps

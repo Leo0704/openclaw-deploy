@@ -279,7 +279,7 @@ jobs:
       - checkout
       - run:
           name: Setup pnpm
-          command: npm install -g pnpm@10
+          command: npm exec --yes pnpm@10
       - run:
           name: Clone OpenClaw
           command: |

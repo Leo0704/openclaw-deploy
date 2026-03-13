@@ -1,0 +1,456 @@
+# 构建并发布 Release - 手动触发
+
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        description: '选择构建产物'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - lobster
+          - openclaw
+      platform:
+        description: '选择构建平台'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - win-x64
+          - macos-arm64
+          - linux-x64
+
+env:
+  NODE_VERSION: "22.14.0"
+  OPENCLAW_VERSION: "2026.3.11"
+
+jobs:
+  # ============================================
+  # 构建 OpenClaw 离线包
+  # ============================================
+  build-openclaw-win:
+    if: (inputs.product == 'all' || inputs.product == 'openclaw') && (inputs.platform == 'all' || inputs.platform == 'win-x64')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        run: npm install -g pnpm@10
+
+      - name: Clone OpenClaw
+        run: |
+          if (Test-Path openclaw) { Remove-Item -Recurse -Force openclaw }
+          git init openclaw
+          cd openclaw
+          git remote add origin https://github.com/openclaw/openclaw.git
+          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }} || git fetch --depth 1 origin
+          git checkout -f FETCH_HEAD
+
+      - name: Install & Build OpenClaw
+        working-directory: openclaw
+        run: |
+          pnpm install --frozen-lockfile || pnpm install
+          pnpm build
+
+      - name: Download Node.js
+        run: |
+          if (Test-Path node.zip) { Remove-Item -Force node.zip }
+          if (Test-Path node) { Remove-Item -Recurse -Force node }
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}-win-x64.zip" -OutFile "node.zip"
+          Expand-Archive -Path "node.zip" -DestinationPath "node" -Force
+          New-Item -ItemType Directory -Path "bundle/node" -Force | Out-Null
+          Move-Item -Path "node\node-v${{ env.NODE_VERSION }}-win-x64\*" -Destination "bundle\node\" -Force
+
+      - name: Create bundle
+        run: |
+          New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
+          robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) { exit 1 }
+
+      - name: Create start.bat
+        run: |
+          $batContent = @"
+          @echo off
+          chcp 65001 >nul
+          setlocal
+          set "SCRIPT_DIR=%~dp0"
+          set "NODE_DIR=%SCRIPT_DIR%node\"
+          set "OPENCLAW_DIR=%SCRIPT_DIR%openclaw\"
+          set "PATH=%NODE_DIR%;%PATH%"
+          cd /d "%OPENCLAW_DIR%"
+          echo Starting OpenClaw...
+          "%NODE_DIR%node.exe" openclaw.mjs gateway run --port 18789 --allow-unconfigured %*
+          "@
+          $batContent | Out-File -FilePath bundle/start.bat -Encoding utf8BOM
+
+      - name: Create VERSION file
+        run: |
+          "openclaw: ${{ env.OPENCLAW_VERSION }}" | Out-File bundle/VERSION -Encoding utf8
+          "node: ${{ env.NODE_VERSION }}" | Add-Content bundle/VERSION
+          "platform: win-x64" | Add-Content bundle/VERSION
+          "build_date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Add-Content bundle/VERSION
+
+      - name: Create archive
+        working-directory: bundle
+        run: |
+          tar -czvf "../openclaw-win-x64-${{ env.OPENCLAW_VERSION }}.tar.gz" .
+
+      - name: Cleanup
+        run: |
+          Remove-Item -Path "node.zip" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "node" -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-win-x64
+          path: openclaw-win-x64-*.tar.gz
+
+  build-openclaw-macos:
+    if: (inputs.product == 'all' || inputs.product == 'openclaw') && (inputs.platform == 'all' || inputs.platform == 'macos-arm64')
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        run: npm install -g pnpm@10
+
+      - name: Clone OpenClaw
+        run: |
+          rm -rf openclaw
+          git init openclaw
+          cd openclaw
+          git remote add origin https://github.com/openclaw/openclaw.git
+          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }} || git fetch --depth 1 origin
+          git checkout -f FETCH_HEAD
+
+      - name: Install & Build OpenClaw
+        working-directory: openclaw
+        run: |
+          pnpm install --frozen-lockfile || pnpm install
+          pnpm build
+
+      - name: Download Node.js
+        run: |
+          rm -rf node*.tar.gz node-v${{ env.NODE_VERSION }}-darwin-arm64
+          curl -LO https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}-darwin-arm64.tar.gz
+          tar -xzf node-v${{ env.NODE_VERSION }}-darwin-arm64.tar.gz
+          mkdir -p bundle/node
+          cp -R node-v${{ env.NODE_VERSION }}-darwin-arm64/* bundle/node/
+
+      - name: Create bundle
+        run: |
+          mkdir -p bundle/openclaw
+          rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+
+      - name: Create start.sh
+        run: |
+          cat > bundle/start.sh <<'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          export PATH="$SCRIPT_DIR/node/bin:$PATH"
+          cd "$SCRIPT_DIR/openclaw"
+          echo "Starting OpenClaw..."
+          "$SCRIPT_DIR/node/bin/node" openclaw.mjs gateway run --port 18789 --allow-unconfigured "$@"
+          EOF
+          chmod +x bundle/start.sh
+
+      - name: Create VERSION file
+        run: |
+          echo "openclaw: ${{ env.OPENCLAW_VERSION }}" > bundle/VERSION
+          echo "node: ${{ env.NODE_VERSION }}" >> bundle/VERSION
+          echo "platform: macos-arm64" >> bundle/VERSION
+          echo "build_date: $(date '+%Y-%m-%d %H:%M:%S')" >> bundle/VERSION
+
+      - name: Create archive
+        working-directory: bundle
+        run: |
+          tar -czvf "../openclaw-macos-arm64-${{ env.OPENCLAW_VERSION }}.tar.gz" .
+
+      - name: Cleanup
+        run: |
+          rm -f node-v${{ env.NODE_VERSION }}-darwin-arm64.tar.gz
+          rm -rf node-v${{ env.NODE_VERSION }}-darwin-arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-macos-arm64
+          path: openclaw-macos-arm64-*.tar.gz
+
+  build-openclaw-linux:
+    if: (inputs.product == 'all' || inputs.product == 'openclaw') && (inputs.platform == 'all' || inputs.platform == 'linux-x64')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        run: npm install -g pnpm@10
+
+      - name: Clone OpenClaw
+        run: |
+          rm -rf openclaw
+          git init openclaw
+          cd openclaw
+          git remote add origin https://github.com/openclaw/openclaw.git
+          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }} || git fetch --depth 1 origin
+          git checkout -f FETCH_HEAD
+
+      - name: Install & Build OpenClaw
+        working-directory: openclaw
+        run: |
+          pnpm install --frozen-lockfile || pnpm install
+          pnpm build
+
+      - name: Download Node.js
+        run: |
+          rm -rf node*.tar.gz node-v${{ env.NODE_VERSION }}-linux-x64
+          curl -LO https://nodejs.org/dist/v${{ env.NODE_VERSION }}/node-v${{ env.NODE_VERSION }}-linux-x64.tar.gz
+          tar -xzf node-v${{ env.NODE_VERSION }}-linux-x64.tar.gz
+          mkdir -p bundle/node
+          cp -R node-v${{ env.NODE_VERSION }}-linux-x64/* bundle/node/
+
+      - name: Create bundle
+        run: |
+          mkdir -p bundle/openclaw
+          rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+
+      - name: Create start.sh
+        run: |
+          cat > bundle/start.sh <<'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          export PATH="$SCRIPT_DIR/node/bin:$PATH"
+          cd "$SCRIPT_DIR/openclaw"
+          echo "Starting OpenClaw..."
+          "$SCRIPT_DIR/node/bin/node" openclaw.mjs gateway run --port 18789 --allow-unconfigured "$@"
+          EOF
+          chmod +x bundle/start.sh
+
+      - name: Create VERSION file
+        run: |
+          echo "openclaw: ${{ env.OPENCLAW_VERSION }}" > bundle/VERSION
+          echo "node: ${{ env.NODE_VERSION }}" >> bundle/VERSION
+          echo "platform: linux-x64" >> bundle/VERSION
+          echo "build_date: $(date '+%Y-%m-%d %H:%M:%S')" >> bundle/VERSION
+
+      - name: Create archive
+        working-directory: bundle
+        run: |
+          tar -czvf "../openclaw-linux-x64-${{ env.OPENCLAW_VERSION }}.tar.gz" .
+
+      - name: Cleanup
+        run: |
+          rm -f node-v${{ env.NODE_VERSION }}-linux-x64.tar.gz
+          rm -rf node-v${{ env.NODE_VERSION }}-linux-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-linux-x64
+          path: openclaw-linux-x64-*.tar.gz
+
+  # ============================================
+  # 构建 Lobster Assistant
+  # ============================================
+  build-lobster-macos-arm64:
+    if: (inputs.product == 'all' || inputs.product == 'lobster') && (inputs.platform == 'all' || inputs.platform == 'macos-arm64')
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: apps/cli
+        run: npm install
+
+      - name: Build TypeScript
+        working-directory: apps/cli
+        run: npm run build
+
+      - name: Build binary
+        working-directory: apps/cli
+        run: |
+          npx @yao-pkg/pkg dist/index.js --targets node22-macos-arm64 --output bin/lobster-macos-arm64
+
+      - name: Get Lobster version
+        id: version
+        run: echo "LOBSTER_VERSION=$(node -p \"require('./apps/cli/package.json').version\")" >> $GITHUB_OUTPUT
+
+      - name: Build macOS app
+        run: |
+          chmod +x ../../scripts/build-macos-app.sh
+          ../../scripts/build-macos-app.sh apps/cli/bin/lobster-macos-arm64 apps/cli/bin/lobster-macos-arm64-app.zip "${{ steps.version.outputs.LOBSTER_VERSION }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lobster-macos-arm64
+          path: |
+            apps/cli/bin/lobster-macos-arm64
+            apps/cli/bin/lobster-macos-arm64-app.zip
+
+  build-lobster-linux:
+    if: (inputs.product == 'all' || inputs.product == 'lobster') && (inputs.platform == 'all' || inputs.platform == 'linux-x64')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: apps/cli
+        run: npm install
+
+      - name: Build TypeScript
+        working-directory: apps/cli
+        run: npm run build
+
+      - name: Build binary
+        working-directory: apps/cli
+        run: |
+          npx @yao-pkg/pkg dist/index.js --targets node22-linux-x64 --output bin/lobster-linux-x64
+          chmod +x apps/cli/bin/lobster-linux-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lobster-linux-x64
+          path: apps/cli/bin/lobster-linux-x64
+
+  build-lobster-win:
+    if: (inputs.product == 'all' || inputs.product == 'lobster') && (inputs.platform == 'all' || inputs.platform == 'win-x64')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: apps/cli
+        run: npm install
+
+      - name: Build TypeScript
+        working-directory: apps/cli
+        run: npm run build
+
+      - name: Build binary
+        working-directory: apps/cli
+        run: |
+          npx @yao-pkg/pkg dist/index.js --targets node22-win-x64 --output bin/lobster-win-x64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lobster-win-x64
+          path: apps/cli/bin/lobster-win-x64.exe
+
+  # ============================================
+  # 发布到公开仓库 lobster-releases
+  # ============================================
+  release:
+    needs: [
+      build-openclaw-win,
+      build-openclaw-macos,
+      build-openclaw-linux,
+      build-lobster-macos-arm64,
+      build-lobster-linux,
+      build-lobster-win
+    ]
+    if: >
+      !cancelled() && !failure() &&
+      (needs.build-openclaw-win.result == 'success' || needs.build-openclaw-macos.result == 'success' ||
+       needs.build-openclaw-linux.result == 'success' || needs.build-lobster-macos-arm64.result == 'success' ||
+       needs.build-lobster-linux.result == 'success' || needs.build-lobster-win.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Lobster version
+        id: version
+        run: echo "LOBSTER_VERSION=$(node -p \"require('./apps/cli/package.json').version\")" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List files
+        run: find artifacts -type f || true
+
+      - name: Check if artifacts exist
+        id: check_artifacts
+        run: |
+          count=$(find artifacts -type f 2>/dev/null | wc -l)
+          echo "count=$count" >> $GITHUB_OUTPUT
+          if [ "$count" -eq 0 ]; then
+            echo "No artifacts found, skipping release"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set release name
+        id: release
+        run: |
+          echo "tag_name=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Publish to GitHub Releases
+        if: steps.check_artifacts.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: true
+          tag_name: ${{ steps.release.outputs.tag_name }}
+          name: "Build ${{ steps.version.outputs.LOBSTER_VERSION }}"
+          generate_release_notes: true
+          repository: Leo0704/lobster-releases
+          files: |
+            artifacts/openclaw-win-x64/*.tar.gz
+            artifacts/openclaw-macos-arm64/*.tar.gz
+            artifacts/openclaw-linux-x64/*.tar.gz
+            artifacts/lobster-macos-arm64/lobster-macos-arm64
+            artifacts/lobster-macos-arm64/lobster-macos-arm64-app.zip
+            artifacts/lobster-linux-x64/lobster-linux-x64
+            artifacts/lobster-win-x64/lobster-win-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

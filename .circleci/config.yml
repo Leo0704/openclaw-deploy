@@ -167,22 +167,22 @@ jobs:
             pnpm install --frozen-lockfile || pnpm install
             pnpm build
       - run:
-          name: Download Node.js
+          name: Download Node.js for bundle
           command: |
-            choco install nodejs --version=22.14.0 -y
+            # 直接下载 Node.js zip，避免路径问题
+            Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip" -OutFile "node.zip"
+            Expand-Archive -Path "node.zip" -DestinationPath "node" -Force
+            New-Item -ItemType Directory -Path "bundle/node" -Force | Out-Null
+            Move-Item -Path "node\node-v22.14.0-win-x64\*" -Destination "bundle\node\" -Force
       - run:
           name: Create bundle
           command: |
-            mkdir bundle/openclaw
-            mkdir bundle/node
-            # 复制 OpenClaw (排除 .git)
-            Get-ChildItem -Path openclaw -Recurse -File | Where-Object { $_.FullName -notmatch '\.git' } | ForEach-Object {
-              $dest = $_.FullName -replace '.*\\openclaw\\', 'bundle\openclaw\'
-              New-Item -ItemType File -Path (Split-Path $dest) -Force | Out-Null
-              Copy-Item $_.FullName -Destination $dest -Force
-            }
-            # 复制 Node.js
-            Copy-Item -Path "C:\Program Files\nodejs\*" -Destination "bundle\node\" -Recurse -Force
+            New-Item -ItemType Directory -Path "bundle/openclaw" -Force | Out-Null
+            # 使用 robocopy 复制（更快更可靠）
+            robocopy openclaw bundle/openclaw /E /XD .git /NFL /NDL /NJH /NJS
+            # 验证文件数量
+            $count = (Get-ChildItem -Path bundle/openclaw -Recurse -File).Count
+            Write-Host "Copied $count files"
       - run:
           name: Create start.bat
           command: |
@@ -243,7 +243,7 @@ jobs:
             curl -LO https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz
             tar -xzf node-v22.14.0-darwin-arm64.tar.gz
             mkdir -p bundle/node
-            mv node-v22.14.0-darwin-arm64/* bundle/node/
+            cp -R node-v22.14.0-darwin-arm64/* bundle/node/
       - run:
           name: Create bundle
           command: |
@@ -302,7 +302,7 @@ jobs:
             curl -LO https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.gz
             tar -xzf node-v22.14.0-linux-x64.tar.gz
             mkdir -p bundle/node
-            mv node-v22.14.0-linux-x64/* bundle/node/
+            cp -R node-v22.14.0-linux-x64/* bundle/node/
       - run:
           name: Create bundle
           command: |

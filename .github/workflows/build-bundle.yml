@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'OpenClaw version (e.g., 2026.3.8)'
+        description: 'OpenClaw version (e.g., 2026.3.11)'
         required: true
-        default: '2026.3.8'
+        default: '2026.3.11'
       node_version:
         description: 'Node.js version'
         required: true
@@ -60,7 +60,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="${{ github.event.inputs.version || inputs.version || '2026.3.8' }}"
+          VERSION="${{ github.event.inputs.version || inputs.version || '2026.3.11' }}"
           NODE_VER="${{ github.event.inputs.node_version || inputs.node_version || '22.14.0' }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "node_version=${NODE_VER}" >> $GITHUB_OUTPUT
@@ -139,7 +139,7 @@ jobs:
           curl -LO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${ARCH}.tar.gz"
           tar -xzf "node-v${NODE_VERSION}-${ARCH}.tar.gz"
           mkdir -p bundle/node
-          mv node-v${NODE_VERSION}-${ARCH}/* bundle/node/
+          cp -R node-v${NODE_VERSION}-${ARCH}/* bundle/node/
 
       - name: Debug: List files (Windows)
         if: runner.os == 'Windows'
@@ -227,13 +227,14 @@ jobs:
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: powershell
         env:
           VERSION: ${{ steps.version.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           # Windows 上使用 tar 打包（避免 zip 的 2GB 限制）
-          cd bundle
+          # Git for Windows 自带 tar
+          Set-Location bundle
           tar -czvf "../openclaw-${PLATFORM}-${VERSION}.tar.gz" *
 
       - name: Create archive (Unix)
@@ -273,7 +274,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          VERSION: ${{ github.event.inputs.version || inputs.version || '2026.3.8' }}
+          VERSION: ${{ github.event.inputs.version || inputs.version || '2026.3.11' }}
         run: |
           TAG="openclaw-v${VERSION}"
 

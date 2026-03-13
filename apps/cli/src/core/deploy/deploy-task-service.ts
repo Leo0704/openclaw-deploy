@@ -6,7 +6,10 @@ const {
   validateInstallPathForUse,
 } = require('../../platform/path/platform-paths') as typeof import('../../platform/path/platform-paths');
 
-const { saveConfig } = require('../config/lobster-config') as typeof import('../config/lobster-config');
+const {
+  saveConfig,
+  removePathIfExists,
+} = require('../config/lobster-config') as typeof import('../config/lobster-config');
 const {
   normalizeApiFormat,
   normalizeEndpointId,
@@ -18,12 +21,14 @@ const {
 const {
   writeManagedOpenClawConfig,
   getManagedOpenClawConfigPath,
+  getManagedOpenClawStateDir,
   readManagedOpenClawConfig,
 } = require('../../platform/storage/storage-paths') as typeof import('../../platform/storage/storage-paths');
 const {
   getOfflineBundleInfo,
   detectInstall,
   detectDownloadedBundle,
+  checkDiskSpace,
   validateBundleFile,
   extractBundle,
   validateBundle,
@@ -41,6 +46,47 @@ type DeployTaskDeps = {
   addLog: (message: string, level?: DeployLogLevel) => void;
   getUpdateState?: () => { mode: string };
 };
+
+function cleanupBeforeDeploy(
+  installPath: string,
+  baseConfig: Record<string, unknown>,
+  addLog: (message: string, level?: DeployLogLevel) => void
+): void {
+  const removedPaths: string[] = [];
+  const candidatePaths: string[] = [];
+  const previousInstallPath = String(baseConfig.installPath || '').trim();
+
+  if (previousInstallPath && path.resolve(previousInstallPath) !== path.resolve(installPath)) {
+    candidatePaths.push(previousInstallPath);
+  }
+  candidatePaths.push(installPath);
+  candidatePaths.push(getManagedOpenClawStateDir(baseConfig));
+  candidatePaths.push(getManagedOpenClawConfigPath(baseConfig));
+  candidatePaths.push(path.join(os.tmpdir(), 'openclaw'));
+
+  const visited = new Set<string>();
+  for (const target of candidatePaths) {
+    const normalized = String(target || '').trim();
+    if (!normalized) continue;
+    const resolved = path.resolve(normalized);
+    if (visited.has(resolved) || !fs.existsSync(resolved)) {
+      continue;
+    }
+    visited.add(resolved);
+    try {
+      removePathIfExists(resolved, removedPaths);
+      addLog(`已清理旧数据: ${resolved}`, 'info');
+    } catch (error) {
+      addLog(`清理失败，已跳过: ${resolved} (${(error as Error).message})`, 'warning');
+    }
+  }
+
+  if (removedPaths.length === 0) {
+    addLog('未检测到需要清理的旧目录/缓存/配置', 'info');
+  } else {
+    addLog(`部署前清理完成，共清理 ${removedPaths.length} 处旧数据`, 'success');
+  }
+}
 
 export async function performDeployTask(
   data: Record<string, unknown>,
@@ -73,21 +119,13 @@ export async function performDeployTask(
   try {
     deps.addLog('开始部署...');
 
-    // 验证必要参数
-    if (!data.apiKey) {
-      deps.addLog('错误: 未提供 API Key', 'error');
-      return { success: false, error: '请输入 API Key' };
-    }
-    if (!data.model) {
-      deps.addLog('错误: 未选择模型', 'error');
-      return { success: false, error: '请选择模型' };
-    }
-
-    // 保存配置
-    config.provider = data.provider || 'anthropic';
-    config.model = data.model;
-    config.apiKey = data.apiKey;
+    // 部署只需要安装路径和端口，API Key 和模型在启动前配置即可
     config.gatewayPort = gatewayPort;
+
+    // 保存配置（如果前端传了的话，但不是强制的）
+    if (data.provider !== undefined) config.provider = data.provider;
+    if (data.model !== undefined) config.model = data.model;
+    if (data.apiKey !== undefined) config.apiKey = data.apiKey;
     if (data.baseUrl !== undefined) config.baseUrl = data.baseUrl;
     if (data.apiFormat !== undefined) config.apiFormat = normalizeApiFormat(data.apiFormat);
     if (data.customModelId !== undefined) config.customModelId = data.customModelId;
@@ -118,6 +156,20 @@ export async function performDeployTask(
     if (existingInstall.installed && existingInstall.needUpdate) {
       deps.addLog(`检测到旧版本 v${existingInstall.version}，将更新到 v${BUNDLE_CONFIG.version}`, 'warning');
     }
+
+    deps.addLog('部署前检查旧目录、缓存和配置...', 'info');
+    cleanupBeforeDeploy(installPath, baseConfig, deps.addLog);
+    deps.addLog('部署前检查磁盘空间（至少 20GB）...', 'info');
+    const diskCheck = checkDiskSpace(installPath);
+    if (!diskCheck.sufficient) {
+      const availableGb = ((diskCheck.available || 0) / 1024 / 1024 / 1024).toFixed(2);
+      const requiredGb = (diskCheck.required / 1024 / 1024 / 1024).toFixed(0);
+      const diskSpaceError = `当前部署目录可用空间 ${availableGb}GB，不足 ${requiredGb}GB。请切换部署目录到剩余空间不少于 ${requiredGb}GB 的磁盘后重试`;
+      deps.addLog(diskSpaceError, 'error');
+      return { success: false, error: diskSpaceError };
+    }
+    const availableGb = ((diskCheck.available || 0) / 1024 / 1024 / 1024).toFixed(2);
+    deps.addLog(`磁盘空间检查通过，可用 ${availableGb}GB`, 'success');
 
     // 步骤2: 获取离线包信息
     const bundleInfo = getOfflineBundleInfo(data.bundleUrl as string | undefined);
@@ -212,9 +264,12 @@ async function writeOpenClawNativeConfig(
   try {
     const provider = String(config.provider || '');
     const model = String(config.model || '');
+    const customModelId = String(config.customModelId || '').trim();
     const apiKey = String(config.apiKey || '');
 
-    if (!provider || !model) {
+    // 检查是否配置了模型（非 custom provider 用 model，custom provider 用 customModelId）
+    const hasModel = model || (provider === 'custom' && customModelId);
+    if (!provider || !hasModel) {
       deps.addLog('跳过 OpenClaw 配置写入（未配置模型）', 'info');
       return;
     }

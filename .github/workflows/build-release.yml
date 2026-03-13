@@ -130,7 +130,7 @@ jobs:
         run: |
           npm ls --omit=dev --all
           $missing = @()
-          foreach ($pkg in @('file-type', 'strtok3')) {
+          foreach ($pkg in @('chalk', 'file-type', 'strtok3')) {
             if (-not (Test-Path "node_modules/$pkg/package.json")) {
               $missing += $pkg
             }
@@ -139,7 +139,33 @@ jobs:
             Write-Host "Missing runtime dependencies: $($missing -join ', ')"
             exit 1
           }
+          $script = @'
+          const pkg = require('./package.json');
+          const missingDeps = [];
+          for (const name of Object.keys(pkg.dependencies || {})) {
+            try {
+              require.resolve(name + '/package.json', { paths: [process.cwd()] });
+            } catch {
+              missingDeps.push(name);
+            }
+          }
+          if (missingDeps.length > 0) {
+            console.error('Missing top-level runtime dependencies:', missingDeps.join(', '));
+            process.exit(1);
+          }
+          console.log('Top-level runtime dependency check passed');
+          '@
+          node -e $script
           Write-Host "Runtime dependency check passed"
+
+      - name: Smoke test OpenClaw runtime
+        run: |
+          $nodePath = Join-Path $PWD "bundle\node\node.exe"
+          if (-not (Test-Path $nodePath)) {
+            Write-Host "Bundled node executable not found: $nodePath"
+            exit 1
+          }
+          & $nodePath "bundle/openclaw/openclaw.mjs" --help
 
       - name: Create start.bat
         run: |
@@ -223,6 +249,33 @@ jobs:
           mkdir -p bundle/openclaw
           rsync -av --exclude='.git' openclaw/ bundle/openclaw/
 
+      - name: Rebuild production dependencies for portable bundle
+        working-directory: bundle/openclaw
+        run: |
+          rm -rf node_modules
+          npm install --omit=dev
+
+      - name: Verify runtime dependencies
+        working-directory: bundle/openclaw
+        run: |
+          npm ls --omit=dev --all
+          missing=()
+          for pkg in chalk file-type strtok3; do
+            if [ ! -f "node_modules/$pkg/package.json" ]; then
+              missing+=("$pkg")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing runtime dependencies: ${missing[*]}"
+            exit 1
+          fi
+          node -e "const pkg=require('./package.json');const missing=[];for(const name of Object.keys(pkg.dependencies||{})){try{require.resolve(name + '/package.json',{paths:[process.cwd()]});}catch{missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
+          echo "Runtime dependency check passed"
+
+      - name: Smoke test OpenClaw runtime
+        run: |
+          ./bundle/node/bin/node bundle/openclaw/openclaw.mjs --help
+
       - name: Create start.sh
         run: |
           cat > bundle/start.sh <<'EOF'
@@ -300,6 +353,33 @@ jobs:
         run: |
           mkdir -p bundle/openclaw
           rsync -av --exclude='.git' openclaw/ bundle/openclaw/
+
+      - name: Rebuild production dependencies for portable bundle
+        working-directory: bundle/openclaw
+        run: |
+          rm -rf node_modules
+          npm install --omit=dev
+
+      - name: Verify runtime dependencies
+        working-directory: bundle/openclaw
+        run: |
+          npm ls --omit=dev --all
+          missing=()
+          for pkg in chalk file-type strtok3; do
+            if [ ! -f "node_modules/$pkg/package.json" ]; then
+              missing+=("$pkg")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing runtime dependencies: ${missing[*]}"
+            exit 1
+          fi
+          node -e "const pkg=require('./package.json');const missing=[];for(const name of Object.keys(pkg.dependencies||{})){try{require.resolve(name + '/package.json',{paths:[process.cwd()]});}catch{missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
+          echo "Runtime dependency check passed"
+
+      - name: Smoke test OpenClaw runtime
+        run: |
+          ./bundle/node/bin/node bundle/openclaw/openclaw.mjs --help
 
       - name: Create start.sh
         run: |

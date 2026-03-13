@@ -24,6 +24,17 @@ const {
   checkPnpmAvailable,
 } = require('../../core/diagnostics/system-check') as typeof import('../../core/diagnostics/system-check');
 
+function getMissingPackage(projectPath: string, packageRefs: string[]): string | null {
+  for (const packageRef of packageRefs) {
+    try {
+      require.resolve(packageRef, { paths: [projectPath] });
+    } catch {
+      return packageRef.split('/')[0];
+    }
+  }
+  return null;
+}
+
 export function checkOpenClawRuntimeReadiness(projectPath: string, options?: { useBundledNode?: boolean }): { ready: boolean; error?: string } {
   if (!isOpenClawProjectDir(projectPath)) {
     return { ready: false, error: '当前安装路径不是有效的 OpenClaw 项目，请重新部署' };
@@ -60,16 +71,13 @@ export function checkOpenClawRuntimeReadiness(projectPath: string, options?: { u
     'strtok3/package.json',
   ]));
 
-  for (const packageRef of requiredPackages) {
-    try {
-      require.resolve(packageRef, { paths: [projectPath] });
-    } catch {
-      const packageName = packageRef.split('/')[0];
-      return {
-        ready: false,
-        error: `OpenClaw 依赖不完整（缺少 ${packageName}），请重新部署离线包或在安装目录执行 npm install`,
-      };
-    }
+  const missingPackage = getMissingPackage(projectPath, requiredPackages);
+  if (missingPackage) {
+    const fixHint = '请联系售后客服处理';
+    return {
+      ready: false,
+      error: `OpenClaw 依赖不完整（缺少 ${missingPackage}），${fixHint}`,
+    };
   }
 
   return { ready: true };
@@ -103,18 +111,6 @@ export async function handleUninstallOpenClaw(
     getUpdateState?: () => { mode: string };
   }
 ): Promise<Record<string, unknown>> {
-  // 检查龙虾助手更新状态（required 模式阻止卸载）
-  if (deps.getUpdateState) {
-    const updateState = deps.getUpdateState();
-    if (updateState.mode === 'required') {
-      return {
-        success: false,
-        error: '龙虾助手版本过低，需要先更新到最新版本。请在 Web 控制台点击"立即更新"按钮。',
-        updateRequired: true,
-      };
-    }
-  }
-
   const installPath = normalizePath(String(config.installPath || '').trim());
   const managedStateDir = getManagedOpenClawStateDir(config);
   const removedPaths: string[] = [];

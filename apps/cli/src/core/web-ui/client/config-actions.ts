@@ -139,19 +139,11 @@ export function renderWebUiClientConfigActions(config: Record<string, unknown>, 
 
           <div class="wizard-step">
             <div class="wizard-step-title">第 4 步：模型配置</div>
-            <div class="wizard-step-desc">填写模型 ID 和可选配置。</div>
+            <div class="wizard-step-desc">填写你要使用的模型名称。</div>
             <div class="form-group">
-              <label class="form-label">Model ID</label>
-              <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || c.model || ''}" placeholder="例如: claude-sonnet-4-20250514, gpt-4.1, glm-5" oninput="resetCustomWizard()">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Endpoint ID</label>
-              <input type="text" id="customEndpointId" class="form-input" value="\${c.customEndpointId || buildEndpointIdFromUrlClient(c.baseUrl || '')}" placeholder="例如: anthropic, openai, custom-api-example-com">
-              <div class="form-hint">用于在 OpenClaw 配置中标识这个 endpoint</div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">模型别名（可选）</label>
-              <input type="text" id="customModelAlias" class="form-input" value="\${c.customModelAlias || ''}" placeholder="例如: claude, gpt, glm">
+              <label class="form-label">模型名称</label>
+              <input type="text" id="customModelId" class="form-input" value="\${c.customModelId || c.model || ''}" placeholder="例如: claude-sonnet-4-20250514, gpt-4o, glm-5" oninput="resetCustomWizard()">
+              <div class="form-hint">在 AI 服务官网可以找到模型名称</div>
             </div>
             <div id="custom-wizard-result" style="margin-top:12px">
               \${state.customWizard.message ? \`<div class="note" style="background:\${state.customWizard.verified ? '#D1FAE5' : '#FEF2F2'};color:\${state.customWizard.verified ? '#065F46' : '#991B1B'}">\${state.customWizard.message}</div>\` : ''}

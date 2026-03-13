@@ -45,8 +45,7 @@ function getInstalledBundleVersion(installPath?: string): string | null {
   return null;
 }
 
-// 最小磁盘空间要求 (500MB)
-const MIN_DISK_SPACE = 500 * 1024 * 1024;
+const MIN_DISK_SPACE = 20 * 1024 * 1024 * 1024;
 
 export interface OfflineBundleInfo {
   version: string;
@@ -406,7 +405,9 @@ export function checkDiskSpace(installPath: string): {
       sufficient,
       available,
       required: MIN_DISK_SPACE,
-      error: sufficient ? undefined : `磁盘空间不足，需要 ${Math.round(MIN_DISK_SPACE / 1024 / 1024)}MB，可用 ${Math.round(available / 1024 / 1024)}MB`,
+      error: sufficient
+        ? undefined
+        : `磁盘空间不足，需要 ${(MIN_DISK_SPACE / 1024 / 1024 / 1024).toFixed(0)}GB，可用 ${(available / 1024 / 1024 / 1024).toFixed(2)}GB，请切换部署目录后重试`,
     };
   } catch (error) {
     return {

@@ -482,7 +482,7 @@ export async function performHealthChecks(config: {
   });
 
   // 2. 磁盘空间检查
-  const requiredSpace = config.requiredDiskSpace || 500 * 1024 * 1024; // 默认 500MB
+  const requiredSpace = config.requiredDiskSpace || 20 * 1024 * 1024 * 1024;
   const diskCheck = checkDiskSpace(requiredSpace, config.installPath);
   checks.push({
     name: '磁盘空间',

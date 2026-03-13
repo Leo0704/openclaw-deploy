@@ -80,6 +80,11 @@ const {
 } = require('../core/deploy/deploy-task-service') as typeof import('../core/deploy/deploy-task-service');
 
 const {
+  scanInstallPaths,
+  scanUserDirectories,
+} = require('../platform/path') as typeof import('../platform/path');
+
+const {
   createApiHandlers,
 } = require('../core/api/api-service') as typeof import('../core/api/api-service');
 
@@ -161,7 +166,7 @@ const {
   startDeployTask,
 } = require('../core/state/app-state') as typeof import('../core/state/app-state');
 
-const VERSION = '1.0.65';
+const VERSION = '1.0.66';
 const DEFAULT_WEB_PORT = 18790;
 const DEFAULT_GATEWAY_PORT = 18789;
 const IS_PACKAGED_RUNTIME = !!(process as NodeJS.Process & { pkg?: unknown }).pkg;
@@ -335,6 +340,9 @@ const apiHandlers = createApiHandlers({
   providers: PROVIDERS,
   clawhubMarketUrl: CLAWHUB_MARKET_URL,
   defaultGatewayPort: DEFAULT_GATEWAY_PORT,
+  // 路径扫描
+  scanInstallPaths,
+  scanUserDirectories,
   // 健康检查
   performHealthChecks,
   // 更新相关

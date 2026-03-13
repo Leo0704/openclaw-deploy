@@ -28,6 +28,8 @@ export function renderWebUiClientState(config: Record<string, unknown>, status: 
       deployTask: null,
       pendingDeployPayload: null,
       selectedBundlePath: null,
+      pathCandidates: [],    // 扫描到的候选安装路径
+      userDirs: [],          // 用户目录列表
       skillsLoaded: false,
       skillsLoading: false,
       channelsLoaded: false,

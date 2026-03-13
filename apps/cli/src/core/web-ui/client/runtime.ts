@@ -21,7 +21,11 @@ export function renderWebUiClientRuntime(config: Record<string, unknown>, status
   void config;
   void status;
   return `    async function start() {
-      if (!state.config.apiKey) return toast('请先配置 API Key', 'error');
+      if (!state.config.apiKey) {
+        toast('请先配置 API Key', 'error');
+        showConfig();
+        return;
+      }
       toast('正在启动...');
       const res = await api('start', {}, 180000);
       if (res.success) {
@@ -29,8 +33,13 @@ export function renderWebUiClientRuntime(config: Record<string, unknown>, status
         else state.status.running = true;
         toast('服务已启动！');
         render();
+      } else {
+        toast(res.error || '启动失败', 'error');
+        // 如果需要配置模型，跳转到配置页面
+        if (res.requireConfig) {
+          showConfig();
+        }
       }
-      else toast(res.error || '启动失败', 'error');
     }
 
     async function stop() {

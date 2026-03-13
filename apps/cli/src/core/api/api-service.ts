@@ -120,6 +120,13 @@ export function createApiHandlers(deps: ApiHandlerDeps) {
         case 'perform-self-update':
           return await deps.performSelfUpdate(config);
 
+        case 'scan-paths':
+          return {
+            success: true,
+            candidates: deps.scanInstallPaths(),
+            userDirs: deps.scanUserDirectories(),
+          };
+
         default:
           return { success: false, error: `未知操作: ${action}` };
       }

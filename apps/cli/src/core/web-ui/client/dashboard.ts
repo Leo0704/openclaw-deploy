@@ -20,6 +20,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
       state.deployPolling = false;
       state.deployTask = null;
       state.pendingDeployPayload = null;
+
       const card = $('main-card');
       const c = state.config, s = state.status;
       const installed = !!s.installed;
@@ -59,70 +60,22 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
       // 未部署
       if (!installed) {
         const deployProvider = PROVIDERS[state.selectedProvider] || PROVIDERS.custom;
-        const deployIsCustom = state.selectedProvider === 'custom';
         card.innerHTML = \`
           <h2 class="card-title">📦 部署 OpenClaw</h2>
           <div class="hero-panel">
             <div class="hero-kicker">Deploy</div>
-            <div class="hero-title">先确定模型接入方式，再落到本地部署</div>
-            <div class="hero-copy">先选模型接入方式，再完成本地部署。常见服务可以快速配置，自定义接入则需要先完成连接验证。</div>
+            <div class="hero-title">一键部署 OpenClaw 到本地</div>
+            <div class="hero-copy">选择安装位置后点击部署即可。模型配置可以在启动服务前完成。</div>
           </div>
 
           <div class="note note-info">部署前会先跑一次性环境预检，网络、端口冲突、安装路径异常会在开始前集中给出。</div>
 
           <div class="wizard-steps">
             <div class="wizard-step">
-              <div class="wizard-step-title">第 1 步：选择 Provider</div>
-              <div class="wizard-step-desc">先选择你要接入的模型服务。常见服务可以直接选，自定义服务则需要手动填写连接信息。</div>
-              <select id="deployProvider" class="form-select" onchange="selectProvider(this.value)">
-                \${renderProviderOptions()}
-              </select>
-            </div>
-
-            <div class="wizard-step">
-              <div class="wizard-step-title">第 2 步：填写模型与认证</div>
-              \${deployIsCustom ? \`
-                <div class="wizard-step-desc">自定义接入时，请先填写地址和密钥，再确认接口类型与模型名称。</div>
-                <div class="form-group">
-                  <label class="form-label">API Key</label>
-                  <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Base URL</label>
-                  <input type="text" id="deployBaseUrl" class="form-input" value="\${c.baseUrl || ''}" placeholder="例如: https://api.example.com/v1">
-                </div>
-                <div class="form-group">
-                  <label class="form-label">接口类型</label>
-                  <select id="deployApiFormat" class="form-select">
-                    <option value="openai" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat || 'openai') === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
-                    <option value="anthropic" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'anthropic' ? 'selected' : ''}>Anthropic-compatible</option>
-                    <option value="unknown" \${normalizeCustomCompatibilityChoiceClient(c.apiFormat) === 'unknown' ? 'selected' : ''}>Unknown (自动探测)</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Model ID</label>
-                  <input type="text" id="deployCustomModelId" class="form-input" value="\${c.customModelId || c.model || ''}" placeholder="例如: glm-5">
-                </div>
-              \` : \`
-                <div class="wizard-step-desc">常见服务只需要选模型并填写 API Key，不需要额外步骤。</div>
-                <div class="form-group">
-                  <label class="form-label">Model</label>
-                  <select id="deployModel" class="form-select" onchange="selectModel(this.value)">
-                    \${renderModelOptions(state.selectedProvider, state.selectedModel)}
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label class="form-label">API Key</label>
-                  <input type="password" id="apiKey" class="form-input" value="\${c.apiKey || ''}" placeholder="请输入 API Key">
-                </div>
-              \`}
-            </div>
-
-            <div class="wizard-step">
-              <div class="wizard-step-title">第 3 步：部署位置与端口</div>
+              <div class="wizard-step-title">第 1 步：选择安装位置</div>
               <div class="form-group">
                 <label class="form-label">安装路径</label>
-                <input type="text" id="path" class="form-input" value="\${c.installPath || ${DEFAULT_INSTALL_PATH}}">
+                <input type="text" id="path" class="form-input" value="\${c.installPath || ${DEFAULT_INSTALL_PATH}}" placeholder="例如: ~/Applications/OpenClaw">
               </div>
               <div class="form-group">
                 <label class="form-label">端口号</label>
@@ -133,11 +86,9 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
 
           <div class="section">
             <div class="panel">
-              <div class="panel-title">部署说明</div>
+              <div class="panel-title">提示</div>
               <div class="panel-copy">
-                \${deployIsCustom
-                  ? '自定义接入会保留你填写的地址、接口类型、模型名称和别名，后续启动时直接沿用。'
-                  : '常见服务这里会自动生成对应配置，保存后可以直接启动 OpenClaw。'}
+                部署完成后，启动服务前需要在"配置"页面填写 API Key 和选择模型。
               </div>
             </div>
           </div>
@@ -387,6 +338,20 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
     function selectModel(modelId) {
       state.selectedModel = modelId;
       render();
+    }
+
+    function onPathSelectChange(value) {
+      const pathInput = $('path');
+      if (value) {
+        pathInput.value = value;
+      }
+    }
+
+    function onPathInputChange() {
+      const pathSelect = $('pathSelect');
+      if (pathSelect) {
+        pathSelect.value = ''; // 清空下拉框选择
+      }
     }
 `;
 }

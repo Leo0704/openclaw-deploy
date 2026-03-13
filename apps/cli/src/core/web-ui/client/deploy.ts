@@ -230,48 +230,13 @@ export function renderWebUiClientDeploy(config: Record<string, unknown>, status:
 
       const installPath = $('path').value;
       const gatewayPort = parseInt($('port').value);
-      const apiKey = $('apiKey')?.value || state.config.apiKey || '';
-      const isCustom = state.selectedProvider === 'custom';
 
-      if (!apiKey) return toast('请输入 API Key', 'error');
+      if (!installPath) return toast('请选择或输入安装路径', 'error');
 
-      const provider = state.selectedProvider;
-      const providerConfig = PROVIDERS[provider];
-
-      let model;
-      let baseUrl = '';
-      let apiFormat = '';
-      let customModelId = '';
-      let customEndpointId = '';
-      let customModelAlias = '';
-
-      if (isCustom) {
-        baseUrl = $('deployBaseUrl')?.value || state.config.baseUrl || '';
-        model = $('deployCustomModelId')?.value || state.config.customModelId || state.config.model || '';
-        apiFormat = resolveApiFormatFromCompatibilityClient($('deployApiFormat')?.value || state.config.apiFormat || 'openai');
-        customModelId = model;
-        customEndpointId = $('customEndpointId')?.value || state.config.customEndpointId || '';
-        customModelAlias = $('customModelAlias')?.value || state.config.customModelAlias || '';
-
-        if (!baseUrl) return toast('请输入 Base URL', 'error');
-        if (!model) return toast('请输入 Model ID', 'error');
-      } else {
-        // 预设 provider：使用配置中的 model
-        model = state.selectedModel || state.config.model;
-        if (!model) return toast('请选择模型', 'error');
-      }
-
+      // 部署只需要路径和端口，模型配置在启动前完成
       const payload = {
         installPath,
         gatewayPort,
-        apiKey,
-        provider,
-        model,
-        baseUrl,
-        apiFormat,
-        customModelId,
-        customEndpointId,
-        customModelAlias,
       };
 
       $('main-card').innerHTML = \`

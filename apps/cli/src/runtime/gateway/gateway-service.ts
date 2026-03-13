@@ -209,8 +209,15 @@ async function handleStartInternal(
   config: Record<string, unknown>,
   deps: GatewayLifecycleDeps
 ): Promise<Record<string, unknown>> {
+  // 检查 API Key
   if (!config.apiKey) {
     return { success: false, error: '请先配置 API Key' };
+  }
+
+  // 检查模型配置
+  const hasModel = config.model || config.customModelId;
+  if (!hasModel) {
+    return { success: false, error: '请先配置模型', requireConfig: true };
   }
 
   // 离线包模式：openclawPath 指向 openclaw 子目录

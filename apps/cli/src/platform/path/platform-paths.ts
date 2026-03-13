@@ -16,6 +16,62 @@ export function getDefaultInstallPath(): string {
 }
 
 /**
+ * 扫描可能的安装目录
+ */
+export function scanInstallPaths(): Array<{ path: string; label: string; hasOpenClaw: boolean }> {
+  const home = os.homedir();
+  const results: Array<{ path: string; label: string; hasOpenClaw: boolean }> = [];
+
+  // 常见安装位置
+  const candidates = [
+    { path: `${home}/Applications/OpenClaw`, label: '~/Applications/OpenClaw' },
+    { path: `${home}/openclaw`, label: '~/openclaw' },
+    { path: `${home}/OpenClaw`, label: '~/OpenClaw' },
+    { path: '/Applications/OpenClaw', label: '/Applications/OpenClaw' },
+    { path: '/usr/local/openclaw', label: '/usr/local/openclaw' },
+    { path: '/opt/openclaw', label: '/opt/openclaw' },
+    { path: `${home}/Projects/openclaw`, label: '~/Projects/openclaw' },
+    { path: `${home}/Developer/openclaw`, label: '~/Developer/openclaw' },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const hasOpenClaw = fs.existsSync(candidate.path) && isOpenClawProjectDir(candidate.path);
+      results.push({
+        path: candidate.path,
+        label: candidate.label,
+        hasOpenClaw,
+      });
+    } catch {
+      // 忽略无法访问的路径
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 扫描用户目录下的文件夹作为候选
+ */
+export function scanUserDirectories(): string[] {
+  const home = os.homedir();
+  const dirs: string[] = [];
+
+  try {
+    const entries = fs.readdirSync(home, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        dirs.push(`${home}/${entry.name}`);
+      }
+    }
+  } catch {
+    // 忽略错误
+  }
+
+  return dirs.sort();
+}
+
+/**
  * Windows 路径紧凑比较（忽略大小写和斜杠）
  */
 function compactWindowsPath(value: string): string {

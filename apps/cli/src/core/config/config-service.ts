@@ -93,6 +93,7 @@ export async function handleTestConnection(
     }
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'User-Agent': 'Lobster-Assistant/1.0',
     };
 
     if (isAnthropic) {

@@ -124,10 +124,10 @@ jobs:
       - name: Rebuild production dependencies for portable bundle
         working-directory: bundle/openclaw
         run: |
-          if (Test-Path "node_modules") {
-            Remove-Item -Path "node_modules" -Recurse -Force
-          }
-          npm install --omit=dev
+          # 不要删除 node_modules！pnpm 安装的依赖结构和 npm 不兼容
+          # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
+          # 只确保原生模块已构建
+          npm rebuild 2>$null || Out-Null
           $daveySpec = node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-win32-x64-msvc';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}"
           if ($daveySpec) {
             npm install --no-save $daveySpec
@@ -259,8 +259,10 @@ jobs:
       - name: Rebuild production dependencies for portable bundle
         working-directory: bundle/openclaw
         run: |
-          rm -rf node_modules
-          npm install --omit=dev
+          # 不要删除 node_modules！pnpm 安装的依赖结构和 npm 不兼容
+          # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
+          # 只确保原生模块已构建
+          npm rebuild 2>/dev/null || true
           DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-darwin-arm64';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
           if [ -n "$DAVEY_SPEC" ]; then
             npm install --no-save "$DAVEY_SPEC"
@@ -360,8 +362,10 @@ jobs:
       - name: Rebuild production dependencies for portable bundle
         working-directory: bundle/openclaw
         run: |
-          rm -rf node_modules
-          npm install --omit=dev
+          # 不要删除 node_modules！pnpm 安装的依赖结构和 npm 不兼容
+          # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
+          # 只确保原生模块已构建
+          npm rebuild 2>/dev/null || true
           DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-linux-x64-gnu';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
           if [ -n "$DAVEY_SPEC" ]; then
             npm install --no-save "$DAVEY_SPEC"

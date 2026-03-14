@@ -127,29 +127,28 @@ jobs:
           if (Test-Path "node_modules") {
             Remove-Item -Path "node_modules" -Recurse -Force
           }
-          npm install --omit=dev --omit=optional
+          npm install --omit=dev
+          $daveySpec = node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-win32-x64-msvc';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}"
+          if ($daveySpec) {
+            npm install --no-save $daveySpec
+          }
 
       - name: Verify critical runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          npm ls --omit=dev --omit=optional --all
-          $missing = @()
-          foreach ($pkg in @('chalk', 'file-type', 'strtok3')) {
-            if (-not (Test-Path "node_modules/$pkg/package.json")) {
-              $missing += $pkg
-            }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Host "Missing runtime dependencies: $($missing -join ', ')"
-            exit 1
-          }
           $script = @'
-          const pkg = require('./package.json');
+          const fs = require('fs');
+          const path = require('path');
+          const pkg = require(path.join(process.cwd(), 'package.json'));
+          const required = ['chalk', 'file-type', 'strtok3'];
+          const missingRequired = required.filter((name) => !fs.existsSync(path.join(process.cwd(), 'node_modules', ...name.split('/'), 'package.json')));
+          if (missingRequired.length > 0) {
+            console.error('Missing runtime dependencies:', missingRequired.join(', '));
+            process.exit(1);
+          }
           const missingDeps = [];
           for (const name of Object.keys(pkg.dependencies || {})) {
-            try {
-              require.resolve(name + '/package.json', { paths: [process.cwd()] });
-            } catch {
+            if (!fs.existsSync(path.join(process.cwd(), 'node_modules', ...name.split('/'), 'package.json'))) {
               missingDeps.push(name);
             }
           }
@@ -160,6 +159,7 @@ jobs:
           console.log('Top-level runtime dependency check passed');
           '@
           node -e $script
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           Write-Host "Runtime dependency check passed"
 
       - name: Smoke test OpenClaw runtime
@@ -260,23 +260,16 @@ jobs:
         working-directory: bundle/openclaw
         run: |
           rm -rf node_modules
-          npm install --omit=dev --omit=optional
+          npm install --omit=dev
+          DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-darwin-arm64';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
+          if [ -n "$DAVEY_SPEC" ]; then
+            npm install --no-save "$DAVEY_SPEC"
+          fi
 
       - name: Verify runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          npm ls --omit=dev --omit=optional --all
-          missing=()
-          for pkg in chalk file-type strtok3; do
-            if [ ! -f "node_modules/$pkg/package.json" ]; then
-              missing+=("$pkg")
-            fi
-          done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "Missing runtime dependencies: ${missing[*]}"
-            exit 1
-          fi
-          node -e "const pkg=require('./package.json');const missing=[];for(const name of Object.keys(pkg.dependencies||{})){try{require.resolve(name + '/package.json',{paths:[process.cwd()]});}catch{missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
+          node -e "const fs=require('fs');const path=require('path');const pkg=require(path.join(process.cwd(),'package.json'));const required=['chalk','file-type','strtok3'];const missingRequired=required.filter((name)=>!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json')));if(missingRequired.length){console.error('Missing runtime dependencies:',missingRequired.join(', '));process.exit(1);}const missing=[];for(const name of Object.keys(pkg.dependencies||{})){if(!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json'))){missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
           echo "Runtime dependency check passed"
 
       - name: Smoke test OpenClaw runtime
@@ -368,23 +361,16 @@ jobs:
         working-directory: bundle/openclaw
         run: |
           rm -rf node_modules
-          npm install --omit=dev --omit=optional
+          npm install --omit=dev
+          DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-linux-x64-gnu';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
+          if [ -n "$DAVEY_SPEC" ]; then
+            npm install --no-save "$DAVEY_SPEC"
+          fi
 
       - name: Verify runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          npm ls --omit=dev --omit=optional --all
-          missing=()
-          for pkg in chalk file-type strtok3; do
-            if [ ! -f "node_modules/$pkg/package.json" ]; then
-              missing+=("$pkg")
-            fi
-          done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "Missing runtime dependencies: ${missing[*]}"
-            exit 1
-          fi
-          node -e "const pkg=require('./package.json');const missing=[];for(const name of Object.keys(pkg.dependencies||{})){try{require.resolve(name + '/package.json',{paths:[process.cwd()]});}catch{missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
+          node -e "const fs=require('fs');const path=require('path');const pkg=require(path.join(process.cwd(),'package.json'));const required=['chalk','file-type','strtok3'];const missingRequired=required.filter((name)=>!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json')));if(missingRequired.length){console.error('Missing runtime dependencies:',missingRequired.join(', '));process.exit(1);}const missing=[];for(const name of Object.keys(pkg.dependencies||{})){if(!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json'))){missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
           echo "Runtime dependency check passed"
 
       - name: Smoke test OpenClaw runtime

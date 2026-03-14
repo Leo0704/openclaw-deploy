@@ -128,9 +128,12 @@ jobs:
           # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
           # 只确保原生模块已构建
           npm rebuild 2>$null || Out-Null
-          $daveySpec = node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-win32-x64-msvc';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}"
-          if ($daveySpec) {
-            npm install --no-save $daveySpec
+          # 检查 @snazzah/davey 是否存在，如果存在则安装对应的原生模块
+          if (Test-Path "node_modules\@snazzah\davey") {
+            $daveySpec = node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-win32-x64-msvc';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}"
+            if ($daveySpec) {
+              npm install --no-save $daveySpec 2>$null || Out-Null
+            }
           }
 
       - name: Verify critical runtime dependencies
@@ -263,9 +266,12 @@ jobs:
           # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
           # 只确保原生模块已构建
           npm rebuild 2>/dev/null || true
-          DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-darwin-arm64';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
-          if [ -n "$DAVEY_SPEC" ]; then
-            npm install --no-save "$DAVEY_SPEC"
+          # 检查 @snazzah/davey 是否存在，如果存在则安装对应的原生模块
+          if [ -d "node_modules/@snazzah/davey" ]; then
+            DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-darwin-arm64';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
+            if [ -n "$DAVEY_SPEC" ]; then
+              npm install --no-save "$DAVEY_SPEC" 2>/dev/null || true
+            fi
           fi
 
       - name: Verify runtime dependencies
@@ -366,9 +372,12 @@ jobs:
           # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
           # 只确保原生模块已构建
           npm rebuild 2>/dev/null || true
-          DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-linux-x64-gnu';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
-          if [ -n "$DAVEY_SPEC" ]; then
-            npm install --no-save "$DAVEY_SPEC"
+          # 检查 @snazzah/davey 是否存在，如果存在则安装对应的原生模块
+          if [ -d "node_modules/@snazzah/davey" ]; then
+            DAVEY_SPEC=$(node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-linux-x64-gnu';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}")
+            if [ -n "$DAVEY_SPEC" ]; then
+              npm install --no-save "$DAVEY_SPEC" 2>/dev/null || true
+            fi
           fi
 
       - name: Verify runtime dependencies

@@ -546,7 +546,14 @@ jobs:
 
       - name: Get Lobster version
         id: version
-        run: echo "LOBSTER_VERSION=$(node -p 'require(\"./apps/cli/package.json\").version')" >> $GITHUB_OUTPUT
+        run: |
+          LOBSTER_VERSION=$(node -p 'require("./apps/cli/package.json").version')
+          if [ -z "$LOBSTER_VERSION" ]; then
+            echo "Error: Failed to get version from package.json"
+            exit 1
+          fi
+          echo "LOBSTER_VERSION=$LOBSTER_VERSION" >> $GITHUB_OUTPUT
+          echo "Found version: $LOBSTER_VERSION"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

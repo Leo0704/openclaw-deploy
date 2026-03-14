@@ -25,11 +25,13 @@ const {
 } = require('../../core/diagnostics/system-check') as typeof import('../../core/diagnostics/system-check');
 
 function getMissingPackage(projectPath: string, packageRefs: string[]): string | null {
+  const nodeModulesPath = path.join(projectPath, 'node_modules');
   for (const packageRef of packageRefs) {
-    try {
-      require.resolve(packageRef, { paths: [projectPath] });
-    } catch {
-      return packageRef.split('/')[0];
+    const packageName = packageRef.split('/')[0];
+    // 检查 node_modules 中是否存在该包的 package.json（文件系统检查，兼容 ESM-only 包）
+    const packageJsonPath = path.join(nodeModulesPath, packageName, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) {
+      return packageName;
     }
   }
   return null;

@@ -57,7 +57,11 @@ jobs:
           git init openclaw
           cd openclaw
           git remote add origin https://github.com/openclaw/openclaw.git
-          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }} || git fetch --depth 1 origin
+          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }}
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "OpenClaw tag v${{ env.OPENCLAW_VERSION }} not found"
+            exit 1
+          }
           git checkout -f FETCH_HEAD
 
       - name: Install & Build OpenClaw
@@ -123,12 +127,12 @@ jobs:
           if (Test-Path "node_modules") {
             Remove-Item -Path "node_modules" -Recurse -Force
           }
-          npm install --omit=dev
+          npm install --omit=dev --omit=optional
 
       - name: Verify critical runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          npm ls --omit=dev --all
+          npm ls --omit=dev --omit=optional --all
           $missing = @()
           foreach ($pkg in @('chalk', 'file-type', 'strtok3')) {
             if (-not (Test-Path "node_modules/$pkg/package.json")) {
@@ -227,7 +231,10 @@ jobs:
           git init openclaw
           cd openclaw
           git remote add origin https://github.com/openclaw/openclaw.git
-          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }} || git fetch --depth 1 origin
+          if ! git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }}; then
+            echo "OpenClaw tag v${{ env.OPENCLAW_VERSION }} not found"
+            exit 1
+          fi
           git checkout -f FETCH_HEAD
 
       - name: Install & Build OpenClaw
@@ -253,12 +260,12 @@ jobs:
         working-directory: bundle/openclaw
         run: |
           rm -rf node_modules
-          npm install --omit=dev
+          npm install --omit=dev --omit=optional
 
       - name: Verify runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          npm ls --omit=dev --all
+          npm ls --omit=dev --omit=optional --all
           missing=()
           for pkg in chalk file-type strtok3; do
             if [ ! -f "node_modules/$pkg/package.json" ]; then
@@ -332,7 +339,10 @@ jobs:
           git init openclaw
           cd openclaw
           git remote add origin https://github.com/openclaw/openclaw.git
-          git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }} || git fetch --depth 1 origin
+          if ! git fetch --depth 1 origin tag v${{ env.OPENCLAW_VERSION }}; then
+            echo "OpenClaw tag v${{ env.OPENCLAW_VERSION }} not found"
+            exit 1
+          fi
           git checkout -f FETCH_HEAD
 
       - name: Install & Build OpenClaw
@@ -358,12 +368,12 @@ jobs:
         working-directory: bundle/openclaw
         run: |
           rm -rf node_modules
-          npm install --omit=dev
+          npm install --omit=dev --omit=optional
 
       - name: Verify runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          npm ls --omit=dev --all
+          npm ls --omit=dev --omit=optional --all
           missing=()
           for pkg in chalk file-type strtok3; do
             if [ ! -f "node_modules/$pkg/package.json" ]; then

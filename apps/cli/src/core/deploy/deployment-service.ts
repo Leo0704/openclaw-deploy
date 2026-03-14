@@ -27,8 +27,18 @@ const {
 function getMissingPackage(projectPath: string, packageRefs: string[]): string | null {
   const nodeModulesPath = path.join(projectPath, 'node_modules');
   for (const packageRef of packageRefs) {
-    const packageName = packageRef.split('/')[0];
-    // 检查 node_modules 中是否存在该包的 package.json（文件系统检查，兼容 ESM-only 包）
+    // 处理 scoped packages（如 @agentclientprotocol/sdk）
+    // packageRef 格式: "pkg-name/package.json" 或 "@scope/pkg-name/package.json"
+    const parts = packageRef.split('/');
+    let packageName: string;
+    if (parts[0].startsWith('@')) {
+      // scoped package: @scope/name/package.json -> @scope/name
+      packageName = `${parts[0]}/${parts[1]}`;
+    } else {
+      // normal package: name/package.json -> name
+      packageName = parts[0];
+    }
+    // 检查 node_modules 中是否存在该包的 package.json
     const packageJsonPath = path.join(nodeModulesPath, packageName, 'package.json');
     if (!fs.existsSync(packageJsonPath)) {
       return packageName;

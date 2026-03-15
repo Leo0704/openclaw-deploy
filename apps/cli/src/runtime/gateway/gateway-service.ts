@@ -94,7 +94,7 @@ type GatewayLifecycleDeps = GatewayStateDeps & {
   defaultGatewayPort: number;
 };
 
-const STARTUP_HEALTH_TIMEOUT_MS = 15000;
+const STARTUP_HEALTH_TIMEOUT_MS = 120000;
 const STARTUP_HEALTH_POLL_INTERVAL_MS = 500;
 
 export async function stopGatewayProcess(

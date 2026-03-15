@@ -142,14 +142,27 @@ function buildUnknownDiskSpaceResult(requiredBytes: number, checkPath: string, r
  */
 export function checkDiskSpace(requiredBytes: number, checkPath: string): DiskSpaceResult {
   try {
-    // 确保路径存在
-    const targetPath = fs.existsSync(checkPath) ? checkPath : path.dirname(checkPath);
+    // 对于 Windows，只需要驱动器字母即可检测磁盘空间
+    // 对于 Unix，需要找到一个存在的父目录
+    let targetPath = checkPath;
+
+    if (os.platform() !== 'win32') {
+      // Unix 系统：找到一个存在的父目录
+      while (!fs.existsSync(targetPath)) {
+        const parent = path.dirname(targetPath);
+        if (parent === targetPath) {
+          return buildUnknownDiskSpaceResult(requiredBytes, checkPath, '无法检查磁盘空间（路径无效）');
+        }
+        targetPath = parent;
+      }
+    }
 
     // 获取磁盘空间信息
     let freeBytes: number;
 
     if (os.platform() === 'win32') {
-      const driveLetter = path.resolve(targetPath).charAt(0).toUpperCase();
+      // 直接从原始路径提取驱动器字母
+      const driveLetter = path.resolve(checkPath).charAt(0).toUpperCase();
       try {
         const output = execSync(`wmic logicaldisk where "DeviceID='${driveLetter}:'" get FreeSpace /value`, {
           encoding: 'utf-8',

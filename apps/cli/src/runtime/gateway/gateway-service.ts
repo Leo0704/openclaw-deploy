@@ -364,19 +364,23 @@ async function handleStartInternal(
     fs.writeFileSync(managedConfigPath, JSON.stringify(mergedOpenClawConfig, null, 2));
     console.log(`[配置] 已写入: ${managedConfigPath}`);
 
+    const bundledNodePath = config.useBundledNode && config.bundledNodePath
+      ? String(config.bundledNodePath)
+      : undefined;
+    const commandEnv = getCommandLookupEnv();
+    const bundledNodeDir = bundledNodePath ? path.dirname(bundledNodePath) : '';
+    const mergedPath = bundledNodeDir
+      ? [bundledNodeDir, commandEnv.PATH || process.env.PATH || ''].filter(Boolean).join(path.delimiter)
+      : (commandEnv.PATH || process.env.PATH || '');
     const env: NodeJS.ProcessEnv = {
-      ...getCommandLookupEnv(),
+      ...commandEnv,
+      PATH: mergedPath,
       OPENCLAW_GATEWAY_PORT: String(gatewayPort),
       OPENCLAW_STATE_DIR: getManagedOpenClawStateDir(config),
       OPENCLAW_CONFIG_PATH: managedConfigPath,
       OPENCLAW_GATEWAY_TOKEN: gatewayToken,
       [provider.envKey]: String(config.apiKey || ''),
     };
-
-    // 使用内置 Node.js（如果配置了）
-    const bundledNodePath = config.useBundledNode && config.bundledNodePath
-      ? String(config.bundledNodePath)
-      : undefined;
 
     const startCommand = getOpenClawStartCommand(installPath, gatewayPort, bundledNodePath);
     deps.appendLog('info', `启动命令: ${startCommand}`);

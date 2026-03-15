@@ -70,6 +70,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile || pnpm install
           pnpm build
+          pnpm ui:build
 
       - name: Download Node.js
         run: |
@@ -300,6 +301,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile || pnpm install
           pnpm build
+          pnpm ui:build
 
       - name: Download Node.js
         run: |
@@ -440,6 +442,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile || pnpm install
           pnpm build
+          pnpm ui:build
 
       - name: Download Node.js
         run: |

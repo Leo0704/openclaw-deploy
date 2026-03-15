@@ -125,9 +125,6 @@ jobs:
       - name: Rebuild production dependencies for portable bundle
         working-directory: bundle/openclaw
         run: |
-          # 不要删除 node_modules！pnpm 安装的依赖结构和 npm 不兼容
-          # 直接使用 rsync 复制过来的 node_modules，它已经包含所有必需的依赖
-          # 只确保原生模块已构建
           if (Test-Path "node_modules") {
             npm rebuild 2>$null
             if ($LASTEXITCODE -ne 0) {
@@ -135,7 +132,29 @@ jobs:
               $global:LASTEXITCODE = 0
             }
           }
-          # 检查 @snazzah/davey 是否存在，如果存在则安装对应的原生模块
+          $depScript = @'
+          const path = require('path');
+          const cwd = process.cwd();
+          const appPkg = require(path.join(cwd, 'package.json'));
+          const specs = [];
+          const pushSpec = (name, version) => {
+            if (!name) return;
+            specs.push(version ? `${name}@${version}` : name);
+          };
+          pushSpec('chalk', appPkg.dependencies?.chalk);
+          pushSpec('file-type', appPkg.dependencies?.['file-type']);
+          let strtok3Version;
+          try {
+            const ftPkg = require(path.join(cwd, 'node_modules', 'file-type', 'package.json'));
+            strtok3Version = ftPkg.dependencies?.strtok3;
+          } catch {}
+          pushSpec('strtok3', strtok3Version);
+          process.stdout.write(specs.join(' '));
+          '@
+          $runtimeDeps = node -e $depScript
+          if ($runtimeDeps) {
+            npm install --no-save $runtimeDeps
+          }
           if (Test-Path "node_modules\@snazzah\davey") {
             $daveySpec = node -e "const pkg=require('./node_modules/@snazzah/davey/package.json');const name='@snazzah/davey-win32-x64-msvc';const version=pkg.optionalDependencies?.[name];if(version){process.stdout.write(name + '@' + version);}"
             if ($daveySpec) {

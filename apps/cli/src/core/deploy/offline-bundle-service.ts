@@ -362,22 +362,16 @@ export function checkDiskSpace(installPath: string): {
   error?: string;
 } {
   try {
-    const testDir = path.dirname(installPath);
-    if (!fs.existsSync(testDir)) {
-      // 目录不存在，尝试创建
-      fs.mkdirSync(testDir, { recursive: true });
-    }
-
     const isWindows = process.platform === 'win32';
     let available = 0;
 
     if (isWindows) {
-      // Windows: 使用 PowerShell 获取磁盘可用空间
+      // Windows: 直接从路径提取驱动器字母，不需要路径存在
       const { execSync } = require('child_process') as typeof import('child_process');
-      const drive = testDir.substring(0, 2); // 如 "C:"
+      const drive = path.resolve(installPath).substring(0, 1); // 如 "C"
       try {
         const result = execSync(
-          `powershell -Command "(Get-PSDrive -Name '${drive.replace(':', '')}').Free"`,
+          `powershell -Command "(Get-PSDrive -Name '${drive}').Free"`,
           { encoding: 'utf-8', timeout: 5000 }
         );
         available = parseInt(result.trim(), 10) || 0;
@@ -386,7 +380,20 @@ export function checkDiskSpace(installPath: string): {
         available = 0;
       }
     } else {
-      // Unix: 使用 df 获取磁盘可用空间
+      // Unix: 需要找到一个存在的父目录
+      let testDir = installPath;
+      while (!fs.existsSync(testDir)) {
+        const parent = path.dirname(testDir);
+        if (parent === testDir) {
+          return {
+            sufficient: false,
+            required: MIN_DISK_SPACE,
+            error: '无法检查磁盘空间（路径无效）',
+          };
+        }
+        testDir = parent;
+      }
+
       const { execSync } = require('child_process') as typeof import('child_process');
       try {
         const result = execSync(

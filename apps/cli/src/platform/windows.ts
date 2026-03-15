@@ -6,6 +6,37 @@ import * as os from 'os';
 import * as path from 'path';
 import type { PlatformAdapter } from './types';
 
+function sanitizeWindowsPathInput(projectPath: string): string {
+  let value = String(projectPath || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  value = value
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+
+  value = value
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'");
+
+  value = value
+    .replace(/^"+|"+$/g, '')
+    .replace(/"/g, '')
+    .trim();
+
+  const driveMatches = [...value.matchAll(/[A-Za-z]:[\\/]/g)];
+  if (driveMatches.length > 0) {
+    const lastMatch = driveMatches[driveMatches.length - 1];
+    const index = lastMatch.index ?? 0;
+    if (index > 0) {
+      value = value.slice(index);
+    }
+  }
+
+  return value;
+}
+
 export class WindowsPlatformAdapter implements PlatformAdapter {
   readonly id = 'windows';
 
@@ -15,7 +46,7 @@ export class WindowsPlatformAdapter implements PlatformAdapter {
   }
 
   normalizeProjectPath(projectPath: string): string {
-    const rawPath = String(projectPath || '').trim();
+    const rawPath = sanitizeWindowsPathInput(projectPath);
     if (!rawPath) {
       return '';
     }

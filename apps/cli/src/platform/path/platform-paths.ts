@@ -159,16 +159,46 @@ function getSuspiciousPathError(projectPath: string): string | undefined {
 
 function probePathWritable(projectPath: string): { valid: boolean; error?: string } {
   try {
-    const probeRoot = fs.existsSync(projectPath) ? projectPath : path.dirname(projectPath);
-    if (!probeRoot) {
-      return { valid: false, error: '安装路径无效，请重新选择一个目录' };
+    // 找到一个存在的父目录来测试写权限
+    let probeRoot = projectPath;
+    while (!fs.existsSync(probeRoot)) {
+      const parent = path.dirname(probeRoot);
+      if (parent === probeRoot) {
+        // 已经到达根目录但仍然不存在
+        return { valid: false, error: '安装路径无效，请重新选择一个目录' };
+      }
+      probeRoot = parent;
     }
 
-    fs.mkdirSync(probeRoot, { recursive: true });
+    // 确保探测点是一个目录
+    try {
+      const stat = fs.statSync(probeRoot);
+      if (!stat.isDirectory()) {
+        return { valid: false, error: '安装路径的父目录不是有效目录' };
+      }
+    } catch {
+      return { valid: false, error: '安装路径无法访问，请检查路径是否正确' };
+    }
+
+    // 在已存在的目录中测试写权限
     const probeDir = fs.mkdtempSync(path.join(probeRoot, '.lobster-write-test-'));
     fs.rmSync(probeDir, { recursive: true, force: true });
     return { valid: true };
-  } catch {
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // 提供更具体的错误信息
+    if (errorMsg.includes('EACCES') || errorMsg.includes('EPERM')) {
+      return {
+        valid: false,
+        error: '安装路径没有写入权限，请选择其他目录',
+      };
+    }
+    if (errorMsg.includes('ENOENT')) {
+      return {
+        valid: false,
+        error: '安装路径不存在或无法访问，请检查路径是否正确',
+      };
+    }
     return {
       valid: false,
       error: '安装路径不可写，请不要选择微信附件目录、系统目录或只读目录',

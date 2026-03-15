@@ -153,16 +153,41 @@ jobs:
           $script = @'
           const fs = require('fs');
           const path = require('path');
+          const cwd = process.cwd();
+          const pnpmDir = path.join(cwd, 'node_modules', '.pnpm');
+          function depExists(name) {
+            const parts = name.split('/');
+            if (fs.existsSync(path.join(cwd, 'node_modules', ...parts, 'package.json'))) {
+              return true;
+            }
+            try {
+              require.resolve(name + '/package.json', { paths: [cwd] });
+              return true;
+            } catch {}
+            try {
+              require.resolve(name, { paths: [cwd] });
+              return true;
+            } catch {}
+            if (fs.existsSync(pnpmDir)) {
+              for (const entry of fs.readdirSync(pnpmDir, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+                if (fs.existsSync(path.join(pnpmDir, entry.name, 'node_modules', ...parts, 'package.json'))) {
+                  return true;
+                }
+              }
+            }
+            return false;
+          }
           const pkg = require(path.join(process.cwd(), 'package.json'));
           const required = ['chalk', 'file-type', 'strtok3'];
-          const missingRequired = required.filter((name) => !fs.existsSync(path.join(process.cwd(), 'node_modules', ...name.split('/'), 'package.json')));
+          const missingRequired = required.filter((name) => !depExists(name));
           if (missingRequired.length > 0) {
             console.error('Missing runtime dependencies:', missingRequired.join(', '));
             process.exit(1);
           }
           const missingDeps = [];
           for (const name of Object.keys(pkg.dependencies || {})) {
-            if (!fs.existsSync(path.join(process.cwd(), 'node_modules', ...name.split('/'), 'package.json'))) {
+            if (!depExists(name)) {
               missingDeps.push(name);
             }
           }
@@ -288,7 +313,41 @@ jobs:
       - name: Verify runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          node -e "const fs=require('fs');const path=require('path');const pkg=require(path.join(process.cwd(),'package.json'));const required=['chalk','file-type','strtok3'];const missingRequired=required.filter((name)=>!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json')));if(missingRequired.length){console.error('Missing runtime dependencies:',missingRequired.join(', '));process.exit(1);}const missing=[];for(const name of Object.keys(pkg.dependencies||{})){if(!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json'))){missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const cwd = process.cwd();
+          const pnpmDir = path.join(cwd, 'node_modules', '.pnpm');
+          function depExists(name) {
+            const parts = name.split('/');
+            if (fs.existsSync(path.join(cwd, 'node_modules', ...parts, 'package.json'))) return true;
+            try { require.resolve(name + '/package.json', { paths: [cwd] }); return true; } catch {}
+            try { require.resolve(name, { paths: [cwd] }); return true; } catch {}
+            if (fs.existsSync(pnpmDir)) {
+              for (const entry of fs.readdirSync(pnpmDir, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+                if (fs.existsSync(path.join(pnpmDir, entry.name, 'node_modules', ...parts, 'package.json'))) return true;
+              }
+            }
+            return false;
+          }
+          const pkg = require(path.join(cwd, 'package.json'));
+          const required = ['chalk', 'file-type', 'strtok3'];
+          const missingRequired = required.filter((name) => !depExists(name));
+          if (missingRequired.length) {
+            console.error('Missing runtime dependencies:', missingRequired.join(', '));
+            process.exit(1);
+          }
+          const missing = [];
+          for (const name of Object.keys(pkg.dependencies || {})) {
+            if (!depExists(name)) missing.push(name);
+          }
+          if (missing.length) {
+            console.error('Missing top-level runtime dependencies:', missing.join(', '));
+            process.exit(1);
+          }
+          console.log('Top-level runtime dependency check passed');
+          NODE
           echo "Runtime dependency check passed"
 
       - name: Smoke test OpenClaw runtime
@@ -394,7 +453,41 @@ jobs:
       - name: Verify runtime dependencies
         working-directory: bundle/openclaw
         run: |
-          node -e "const fs=require('fs');const path=require('path');const pkg=require(path.join(process.cwd(),'package.json'));const required=['chalk','file-type','strtok3'];const missingRequired=required.filter((name)=>!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json')));if(missingRequired.length){console.error('Missing runtime dependencies:',missingRequired.join(', '));process.exit(1);}const missing=[];for(const name of Object.keys(pkg.dependencies||{})){if(!fs.existsSync(path.join(process.cwd(),'node_modules',...name.split('/'),'package.json'))){missing.push(name);}}if(missing.length){console.error('Missing top-level runtime dependencies:',missing.join(', '));process.exit(1);}console.log('Top-level runtime dependency check passed');"
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const cwd = process.cwd();
+          const pnpmDir = path.join(cwd, 'node_modules', '.pnpm');
+          function depExists(name) {
+            const parts = name.split('/');
+            if (fs.existsSync(path.join(cwd, 'node_modules', ...parts, 'package.json'))) return true;
+            try { require.resolve(name + '/package.json', { paths: [cwd] }); return true; } catch {}
+            try { require.resolve(name, { paths: [cwd] }); return true; } catch {}
+            if (fs.existsSync(pnpmDir)) {
+              for (const entry of fs.readdirSync(pnpmDir, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+                if (fs.existsSync(path.join(pnpmDir, entry.name, 'node_modules', ...parts, 'package.json'))) return true;
+              }
+            }
+            return false;
+          }
+          const pkg = require(path.join(cwd, 'package.json'));
+          const required = ['chalk', 'file-type', 'strtok3'];
+          const missingRequired = required.filter((name) => !depExists(name));
+          if (missingRequired.length) {
+            console.error('Missing runtime dependencies:', missingRequired.join(', '));
+            process.exit(1);
+          }
+          const missing = [];
+          for (const name of Object.keys(pkg.dependencies || {})) {
+            if (!depExists(name)) missing.push(name);
+          }
+          if (missing.length) {
+            console.error('Missing top-level runtime dependencies:', missing.join(', '));
+            process.exit(1);
+          }
+          console.log('Top-level runtime dependency check passed');
+          NODE
           echo "Runtime dependency check passed"
 
       - name: Smoke test OpenClaw runtime

@@ -717,7 +717,7 @@ jobs:
       - name: Collect release files
         id: collect_release_files
         run: |
-          shopt -s nullglob
+          shopt -s nullglob globstar
           files=(
             artifacts/openclaw-win-x64/*.tar.gz
             artifacts/openclaw-win-x64/*.zip
@@ -725,10 +725,10 @@ jobs:
             artifacts/openclaw-macos-arm64/*.zip
             artifacts/openclaw-linux-x64/*.tar.gz
             artifacts/openclaw-linux-x64/*.zip
-            artifacts/lobster-macos-arm64/lobster-macos-arm64
-            artifacts/lobster-macos-arm64/lobster-macos-arm64-app.zip
-            artifacts/lobster-linux-x64/lobster-linux-x64
-            artifacts/lobster-win-x64/lobster-win-x64.exe
+            artifacts/lobster-macos-arm64/**/lobster-macos-arm64
+            artifacts/lobster-macos-arm64/**/lobster-macos-arm64-app.zip
+            artifacts/lobster-linux-x64/**/lobster-linux-x64
+            artifacts/lobster-win-x64/**/lobster-win-x64.exe
           )
           if [ ${#files[@]} -eq 0 ]; then
             echo "No release files matched"
@@ -753,10 +753,19 @@ jobs:
         run: |
           echo "tag_name=v${{ steps.version.outputs.LOBSTER_VERSION }}" >> $GITHUB_OUTPUT
 
+      - name: Validate release token
+        if: steps.check_artifacts.outputs.skip == 'false' && steps.collect_release_files.outputs.skip == 'false'
+        run: |
+          if [ -z "${{ secrets.LOBSTER_RELEASES_TOKEN }}" ]; then
+            echo "LOBSTER_RELEASES_TOKEN is empty. Please set a PAT with Contents: write on Leo0704/lobster-releases."
+            exit 1
+          fi
+
       - name: Publish to GitHub Releases
         if: steps.check_artifacts.outputs.skip == 'false' && steps.collect_release_files.outputs.skip == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.LOBSTER_RELEASES_TOKEN }}
           draft: false
           prerelease: false
           tag_name: ${{ steps.release.outputs.tag_name }}
@@ -764,5 +773,3 @@ jobs:
           generate_release_notes: true
           repository: Leo0704/lobster-releases
           files: ${{ steps.collect_release_files.outputs.files }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.LOBSTER_RELEASES_TOKEN }}

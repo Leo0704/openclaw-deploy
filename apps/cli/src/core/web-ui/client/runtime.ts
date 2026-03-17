@@ -54,6 +54,19 @@ export function renderWebUiClientRuntime(config: Record<string, unknown>, status
       else toast(res.error || '停止失败', 'error');
     }
 
+    async function restart() {
+      toast('正在重启...');
+      const res = await api('restart', {}, 180000);
+      if (res.success) {
+        if (res.status) state.status = res.status;
+        else state.status.running = true;
+        toast('服务已重启！');
+        render();
+      } else {
+        toast(res.error || '重启失败', 'error');
+      }
+    }
+
     async function uninstallOpenClaw() {
       const confirmed = confirm('这会停止当前 OpenClaw 服务，并删除安装目录、运行缓存、临时日志和部署配置。产品激活状态会保留。确定继续吗？');
       if (!confirmed) return;

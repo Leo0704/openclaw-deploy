@@ -48,6 +48,9 @@ export function createApiHandlers(deps: ApiHandlerDeps) {
         case 'stop':
           return deps.stopGatewayProcess(config, deps.getGatewayLifecycleDeps());
 
+        case 'restart':
+          return deps.restartGateway(config, deps.getGatewayLifecycleDeps());
+
         case 'logs':
           return { success: true, logs: deps.getLogs() };
 

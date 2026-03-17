@@ -118,7 +118,7 @@ export function renderWebUiClientDashboard(config: Record<string, unknown>, stat
               <div class="hero-copy">\${effectiveStatus.running ? '网关已经就绪，可以直接打开 OpenClaw，或者复制自动认证链接给当前浏览器会话使用。' : '先确认 API 配置无误，再启动本地网关。启动失败时，可直接在下方查看运行日志。'}</div>
               <div class="actions">
                 \${effectiveStatus.running
-                  ? '<button class="btn btn-danger" onclick="stop()">⏹ 停止服务</button>'
+                  ? '<button class="btn btn-danger" onclick="stop()">⏹ 停止服务</button><button class="btn btn-secondary" onclick="restart()">🔄 重启服务</button>'
                   : '<button class="btn btn-primary" onclick="start()">▶ 启动服务</button>'
                 }
                 <button class="btn btn-secondary" onclick="showConfig()">⚙️ 配置</button>

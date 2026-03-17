@@ -111,6 +111,7 @@ const {
 const {
   handleStart,
   stopGatewayProcess,
+  restartGateway,
 } = require('../runtime/gateway/gateway-service') as typeof import('../runtime/gateway/gateway-service');
 
 const {
@@ -320,6 +321,7 @@ const apiHandlers = createApiHandlers({
   handleTestConnection,
   handleStart,
   stopGatewayProcess,
+  restartGateway,
   getGatewayRuntimeStatusAsync,
   verifyLicenseStatus,
   getInstalledOpenClawSkillsFromStatus,

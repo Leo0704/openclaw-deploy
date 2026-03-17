@@ -111,6 +111,22 @@ export async function stopGatewayProcess(
   }
 }
 
+export async function restartGateway(
+  config: Record<string, unknown>,
+  deps: GatewayLifecycleDeps,
+  stopTimeoutMs: number = 10000
+): Promise<Record<string, unknown>> {
+  // 先停止
+  const stopResult = await stopGatewayProcess(config, deps, stopTimeoutMs);
+  if (!stopResult.success) {
+    return { success: false, error: stopResult.error || '停止服务失败' };
+  }
+
+  // 再启动
+  const startResult = await handleStart(config, deps);
+  return startResult;
+}
+
 async function stopGatewayProcessInternal(
   config: Record<string, unknown>,
   deps: GatewayLifecycleDeps,
